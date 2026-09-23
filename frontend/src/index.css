@@ -50,7 +50,7 @@
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
-/* Light warm monochrome — visual source of truth */
+/* Light warm monochrome â€” visual source of truth */
 :root {
     --background: #FBFBFA;
     --foreground: #2F3437;
