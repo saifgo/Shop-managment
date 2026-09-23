@@ -50,10 +50,26 @@ RUN composer dump-autoload --optimize --classmap-authoritative \
     && chown -R www-data:www-data var
 
 COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/app.ini
+COPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 9000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
     CMD php -r "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["php-fpm"]
+
+FROM nginx:1.27-alpine AS nginx
+
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY --from=prod /app/public /app/public
+
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1/healthz || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]

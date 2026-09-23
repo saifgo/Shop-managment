@@ -4,43 +4,66 @@ Production deployment checklist, environment configuration, backup/restore, and 
 
 ## Prerequisites
 
-- Docker Engine 24+ or a PaaS with PostgreSQL 18, Redis 7, and S3-compatible storage
-- TLS termination (reverse proxy or load balancer)
-- Secrets manager for `APP_SECRET`, database credentials, MinIO keys, JWT signing secret
+- Docker Engine 24+ and Docker Compose v2
+- A copy of this repository on the host
+- TLS termination in front of the published HTTP port when the app is on the public internet
+
+## Deploy
+
+One Compose file and one env file start the whole system: PostgreSQL 18, Redis 7, MinIO, the API, the Messenger worker, and the frontend. The browser uses a single port. `/` is the UI and `/api` is the API.
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+On first start the API waits for PostgreSQL and applies migrations. The app is ready when this returns `ok`:
+
+```bash
+curl -sf "http://127.0.0.1:${HTTP_PORT:-8080}/api/health"
+```
+
+Stop the stack with `docker compose down`. Data volumes are kept. `docker compose down -v` deletes the database and uploaded files.
+
+Local development (Vite, Mailpit, source mounts) uses the other file and the same `.env`:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+Do not run both stacks at once. They share the project name and host ports.
 
 ## Environment Variables
 
+Set these in `.env`. Compose builds `DATABASE_URL` from the Postgres settings, so you do not maintain a second connection string.
+
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `APP_ENV` | Yes | Set to `prod` in production |
-| `APP_SECRET` | Yes | Symfony secret; rotate periodically |
-| `DATABASE_URL` | Yes | PostgreSQL connection string |
-| `MESSENGER_TRANSPORT_DSN` | Yes | Redis transport for async jobs |
-| `CORS_ALLOW_ORIGIN` | Yes | Allowed frontend origin regex |
-| `MINIO_ENDPOINT` | Recommended | S3-compatible endpoint (MinIO or AWS S3) |
-| `MINIO_ACCESS_KEY` | Recommended | Storage access key |
-| `MINIO_SECRET_KEY` | Recommended | Storage secret key |
-| `MINIO_BUCKET` | Recommended | Document PDF bucket name |
-| `MAILER_DSN` | Optional | SMTP for transactional mail |
+| `APP_SECRET` | Yes | Symfony secret. Use a long random value |
+| `APP_URL` | Yes | Public URL of the app, including scheme and port |
+| `HTTP_PORT` | Yes | Host port for the UI and API. Default `8080` |
+| `POSTGRES_DB` | Yes | Database name |
+| `POSTGRES_USER` | Yes | Database user |
+| `POSTGRES_PASSWORD` | Yes | Database password. URL-safe characters only. Applied when the data volume is first created |
+| `MINIO_ACCESS_KEY` | Yes | MinIO root user and app access key |
+| `MINIO_SECRET_KEY` | Yes | MinIO root password and app secret |
+| `MINIO_BUCKET` | Yes | Document bucket. Created on first PDF upload |
+| `MINIO_ENDPOINT` | No | Default `http://minio:9000`. Set this to external S3 if you are not using the bundled MinIO |
+| `MESSENGER_TRANSPORT_DSN` | No | Default `redis://redis:6379/messages` |
+| `CORS_ALLOW_ORIGIN` | No | Origin regex. Required when `PUBLIC_API_URL` is a different host than the UI |
+| `MAILER_DSN` | No | `null://null` discards mail. Set an SMTP DSN for real delivery |
+| `PUBLIC_API_URL` | No | Leave empty so the UI calls `/api` on the same origin. Set only for a split API host |
 
-When MinIO variables are omitted, document PDFs fall back to local filesystem storage (`var/storage`) — suitable for single-node dev only.
+`APP_ENV` is `prod` inside this Compose file. Postgres and the MinIO console bind to `127.0.0.1` unless you change `POSTGRES_BIND` or `MINIO_BIND`. Redis stays on the Compose network only.
 
-## Production Docker Compose
-
-Use the production overlay:
+Demo seed data is not loaded automatically. To load it on a fresh database:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-make migrate
-make seed
+docker compose exec api php bin/console app:seed-identity
+docker compose exec api php bin/console app:seed-catalog
+docker compose exec api php bin/console app:seed-inventory
+docker compose exec api php bin/console app:seed-production-config
 ```
-
-The `docker-compose.prod.yml` file:
-
-- Builds API and frontend with `prod` targets
-- Disables bind mounts
-- Sets `APP_ENV=prod`
-- Runs the Messenger worker with restart policy
 
 ## Coolify / PaaS Deployment
 
@@ -121,12 +144,13 @@ php bin/console messenger:failed:retry
 
 ## Production Checklist
 
-- [ ] `APP_SECRET` and database credentials rotated from defaults
-- [ ] TLS enabled on all public endpoints
-- [ ] CORS restricted to production frontend origin
-- [ ] MinIO bucket created and credentials secured
-- [ ] Migrations applied
-- [ ] Worker process running with restart policy
+- [ ] `APP_SECRET`, `POSTGRES_PASSWORD`, and `MINIO_SECRET_KEY` rotated from the example values
+- [ ] `APP_URL` matches the public URL
+- [ ] TLS enabled in front of `HTTP_PORT`
+- [ ] `CORS_ALLOW_ORIGIN` restricted when the API is on another origin
+- [ ] MinIO credentials secured
+- [ ] API container healthy (`/api/health`), which means migrations have been applied
+- [ ] Worker container running (`docker compose ps`)
 - [ ] Daily PostgreSQL backups scheduled
 - [ ] MinIO/S3 document backup scheduled
 - [ ] Health/readiness probes configured in orchestrator

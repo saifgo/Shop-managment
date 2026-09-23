@@ -1,16 +1,48 @@
+# Tittawin — full stack from this file and the project .env.
+#   cp .env.example .env
+#   docker compose up -d --build
+#
+# Local development with bind mounts and Vite:
+#   docker compose -f docker-compose.dev.yml up -d --build
+
+name: shop-managment
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend-env: &backend-env
+  APP_ENV: prod
+  APP_SECRET: ${APP_SECRET:-dev-secret-change-me}
+  APP_SHARE_DIR: ${APP_SHARE_DIR:-var/share}
+  DEFAULT_URI: ${APP_URL:-http://localhost:8080}
+  DATABASE_URL: "postgresql://${POSTGRES_USER:-tittawin}:${POSTGRES_PASSWORD:-tittawin}@postgres:5432/${POSTGRES_DB:-tittawin}?serverVersion=18&charset=utf8"
+  MESSENGER_TRANSPORT_DSN: ${MESSENGER_TRANSPORT_DSN:-redis://redis:6379/messages}
+  CORS_ALLOW_ORIGIN: "${CORS_ALLOW_ORIGIN:-^https?://.+}"
+  MAILER_DSN: ${MAILER_DSN:-null://null}
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tittawin}
+  MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tittawin-secret}
+  MINIO_BUCKET: ${MINIO_BUCKET:-tittawin}
+  RUN_MIGRATIONS: "0"
+
 services:
   postgres:
     image: postgres:18-alpine
+    restart: unless-stopped
+    logging: *logging
     environment:
-      POSTGRES_DB: tittawin
-      POSTGRES_USER: tittawin
-      POSTGRES_PASSWORD: tittawin
+      POSTGRES_DB: ${POSTGRES_DB:-tittawin}
+      POSTGRES_USER: ${POSTGRES_USER:-tittawin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tittawin}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tittawin -d tittawin"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tittawin} -d ${POSTGRES_DB:-tittawin}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -18,8 +50,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
+    logging: *logging
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -28,13 +60,15 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
+    logging: *logging
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: tittawin
-      MINIO_ROOT_PASSWORD: tittawin-secret
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tittawin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-tittawin-secret}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_BIND:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -44,35 +78,16 @@ services:
       retries: 5
       start_period: 10s
 
-  mailpit:
-    image: axllent/mailpit:latest
-    ports:
-      - "8025:8025"
-      - "1025:1025"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-
   api:
     build:
       context: ./backend
-      target: dev
-    env_file:
-      - .env
+      target: prod
+    image: tittawin/api:local
+    restart: unless-stopped
+    logging: *logging
     environment:
-      DATABASE_URL: postgresql://tittawin:tittawin@postgres:5432/tittawin?serverVersion=18&charset=utf8
-      MESSENGER_TRANSPORT_DSN: redis://redis:6379/messages
-      MAILER_DSN: smtp://mailpit:1025
-      DEFAULT_URI: http://localhost:8080
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: tittawin
-      MINIO_SECRET_KEY: tittawin-secret
-      MINIO_BUCKET: tittawin
-    volumes:
-      - ./backend:/app
-      - backend_vendor:/app/vendor
+      <<: *backend-env
+      RUN_MIGRATIONS: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,76 +97,76 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "php -r \"exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);\""]
-      interval: 30s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 40s
+      retries: 8
+      start_period: 60s
 
   nginx:
-    image: nginx:1.27-alpine
-    ports:
-      - "8080:80"
-    volumes:
-      - ./backend/public:/app/public:ro
-      - ./backend/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    build:
+      context: ./backend
+      target: nginx
+    image: tittawin/api-nginx:local
+    restart: unless-stopped
+    logging: *logging
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
-      interval: 30s
+      interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 10s
 
   worker:
-    build:
-      context: ./backend
-      target: dev
-    # Queue failure handling: async retries 3x (exponential backoff); unrecoverable messages land in `failed` (PostgreSQL).
-    # Replay with: php bin/console messenger:failed:show && messenger:failed:retry
-    command: ["php", "bin/console", "messenger:consume", "async", "failed", "-vv", "--time-limit=3600"]
-    env_file:
-      - .env
+    image: tittawin/api:local
+    restart: unless-stopped
+    logging: *logging
+    stop_grace_period: 30s
+    command: ["php", "bin/console", "messenger:consume", "async", "failed", "-vv", "--time-limit=3600", "--memory-limit=256M"]
     environment:
-      DATABASE_URL: postgresql://tittawin:tittawin@postgres:5432/tittawin?serverVersion=18&charset=utf8
-      MESSENGER_TRANSPORT_DSN: redis://redis:6379/messages
-      DEFAULT_URI: http://localhost:8080
-    volumes:
-      - ./backend:/app
-      - backend_vendor:/app/vendor
+      <<: *backend-env
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       api:
         condition: service_healthy
-    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
-      target: dev
+      target: prod
+      args:
+        VITE_API_BASE_URL: ${PUBLIC_API_URL:-}
+    image: tittawin/frontend:local
+    restart: unless-stopped
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    logging: *logging
     ports:
-      - "5173:5173"
-    environment:
-      VITE_API_BASE_URL: http://localhost:8080
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
     volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
+      - ./deploy/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       nginx:
         condition: service_healthy
+      frontend:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173"]
-      interval: 30s
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 10s
 
 volumes:
   postgres_data:
   minio_data:
-  backend_vendor:
-  frontend_node_modules:

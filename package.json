@@ -4,9 +4,11 @@
   "version": "0.1.0",
   "description": "Tittawin Management System — modular monolith ERP",
   "scripts": {
-    "dev": "docker compose up -d --build",
+    "dev": "docker compose -f docker-compose.dev.yml up -d --build",
     "dev:frontend": "npm --prefix frontend run dev",
-    "dev:down": "docker compose down",
+    "dev:down": "docker compose -f docker-compose.dev.yml down",
+    "deploy": "docker compose up -d --build",
+    "deploy:down": "docker compose down",
     "test": "npm --prefix frontend run test",
     "build": "npm --prefix frontend run build"
   }

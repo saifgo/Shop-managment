@@ -1,0 +1,171 @@
+# Local development stack (Vite, Mailpit, source bind mounts).
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# Production deploy uses docker-compose.yml and the same .env.
+
+name: shop-managment
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tittawin}
+      POSTGRES_USER: ${POSTGRES_USER:-tittawin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tittawin}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tittawin} -d ${POSTGRES_DB:-tittawin}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tittawin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-tittawin-secret}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      target: dev
+    environment:
+      APP_ENV: dev
+      APP_SECRET: ${APP_SECRET:-dev-secret-change-me}
+      APP_SHARE_DIR: ${APP_SHARE_DIR:-var/share}
+      DEFAULT_URI: http://localhost:${HTTP_PORT:-8080}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-tittawin}:${POSTGRES_PASSWORD:-tittawin}@postgres:5432/${POSTGRES_DB:-tittawin}?serverVersion=18&charset=utf8"
+      MESSENGER_TRANSPORT_DSN: redis://redis:6379/messages
+      CORS_ALLOW_ORIGIN: "${CORS_ALLOW_ORIGIN:-^https?://.+}"
+      MAILER_DSN: smtp://mailpit:1025
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tittawin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tittawin-secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-tittawin}
+      RUN_MIGRATIONS: "0"
+    volumes:
+      - ./backend:/app
+      - backend_vendor:/app/vendor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php -r \"exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./backend/public:/app/public:ro
+      - ./backend/docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: ./backend
+      target: dev
+    command: ["php", "bin/console", "messenger:consume", "async", "failed", "-vv", "--time-limit=3600"]
+    environment:
+      APP_ENV: dev
+      APP_SECRET: ${APP_SECRET:-dev-secret-change-me}
+      DEFAULT_URI: http://localhost:${HTTP_PORT:-8080}
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-tittawin}:${POSTGRES_PASSWORD:-tittawin}@postgres:5432/${POSTGRES_DB:-tittawin}?serverVersion=18&charset=utf8"
+      MESSENGER_TRANSPORT_DSN: redis://redis:6379/messages
+      MAILER_DSN: smtp://mailpit:1025
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tittawin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tittawin-secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-tittawin}
+      RUN_MIGRATIONS: "0"
+    volumes:
+      - ./backend:/app
+      - backend_vendor:/app/vendor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE_URL: http://localhost:${HTTP_PORT:-8080}
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      nginx:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+  minio_data:
+  backend_vendor:
+  frontend_node_modules:

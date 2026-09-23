@@ -1,12 +1,19 @@
-.PHONY: up down logs migrate seed test lint quality shell-api shell-frontend build
+.PHONY: up down logs migrate seed test lint quality shell-api shell-frontend build deploy deploy-down
 
-COMPOSE = docker compose
+COMPOSE = docker compose -f docker-compose.dev.yml
+COMPOSE_PROD = docker compose
 
 up:
 	$(COMPOSE) up -d --build
 
 down:
 	$(COMPOSE) down
+
+deploy:
+	$(COMPOSE_PROD) up -d --build
+
+deploy-down:
+	$(COMPOSE_PROD) down
 
 logs:
 	$(COMPOSE) logs -f

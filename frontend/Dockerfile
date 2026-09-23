@@ -23,6 +23,9 @@ CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
 
 FROM base AS build
 
+ARG VITE_API_BASE_URL=
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 

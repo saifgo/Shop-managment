@@ -25,7 +25,7 @@ Modular monolith ERP for commerce, inventory, production, and finance.
 # Copy environment template
 cp .env.example .env
 
-# Start all services
+# Start the local development stack
 make up
 
 # Run database migrations and seed demo data
@@ -41,6 +41,19 @@ make seed
 # MinIO:      http://localhost:9001
 ```
 
+## Deploy
+
+The production stack is one Compose file and the project `.env`. It starts PostgreSQL, Redis, MinIO, the API, the queue worker, and the frontend behind a single HTTP port. Migrations run on API startup.
+
+```bash
+cp .env.example .env
+# Set APP_SECRET, POSTGRES_PASSWORD, and MINIO_SECRET_KEY
+
+docker compose up -d --build
+```
+
+Open `http://localhost:8080` (or the host and `HTTP_PORT` from `.env`). See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for backups, mail, and the production checklist.
+
 ## Demo Credentials
 
 | Context  | URL                 | Account                               |
@@ -52,8 +65,10 @@ make seed
 ## Development Commands
 
 ```bash
-make up          # Start Docker services
-make down        # Stop Docker services
+make up          # Start the local development stack
+make down        # Stop the local development stack
+make deploy      # Build and start the production stack
+make deploy-down # Stop the production stack
 make logs        # Tail service logs
 make migrate     # Run Doctrine migrations
 make seed        # Seed identity, catalog, inventory, production config
@@ -96,8 +111,8 @@ npm run test:e2e    # Playwright (requires frontend dev server or preview)
 │       ├── Infrastructure/   Persistence, storage, security, messaging
 │       └── UI/Http/          REST controllers
 ├── frontend/         React SPA with /portal/* and /admin/* route trees
-├── docker-compose.yml
-├── docker-compose.prod.yml
+├── docker-compose.yml       # Production stack (single file + .env)
+├── docker-compose.dev.yml   # Local Vite / Mailpit stack
 ├── docs/DEPLOYMENT.md
 └── .github/workflows/ci.yml
 ```
