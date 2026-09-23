@@ -1,0 +1,59 @@
+FROM php:8.4-fpm-bookworm AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    unzip \
+    libpq-dev \
+    libzip-dev \
+    libicu-dev \
+    curl \
+    && docker-php-ext-install pdo_pgsql opcache zip bcmath intl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /app
+
+FROM base AS dev
+
+COPY composer.json composer.lock symfony.lock ./
+RUN composer install --no-interaction --prefer-dist --no-scripts
+
+COPY . .
+RUN composer dump-autoload --optimize \
+    && mkdir -p var/cache var/log \
+    && chown -R www-data:www-data var
+
+COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/app.ini
+COPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 9000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD php -r "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["php-fpm"]
+
+FROM base AS prod
+
+ENV APP_ENV=prod
+
+COPY composer.json composer.lock symfony.lock ./
+RUN composer install --no-interaction --prefer-dist --no-dev --no-scripts --optimize-autoloader
+
+COPY . .
+RUN composer dump-autoload --optimize --classmap-authoritative \
+    && mkdir -p var/cache var/log \
+    && chown -R www-data:www-data var
+
+COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/app.ini
+
+EXPOSE 9000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD php -r "exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);"
+
+CMD ["php-fpm"]

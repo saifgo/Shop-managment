@@ -1,0 +1,13 @@
+{
+  "name": "tittawin-management-system",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tittawin Management System — modular monolith ERP",
+  "scripts": {
+    "dev": "docker compose up -d --build",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:down": "docker compose down",
+    "test": "npm --prefix frontend run test",
+    "build": "npm --prefix frontend run build"
+  }
+}

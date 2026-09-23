@@ -1,0 +1,29 @@
+# Production overlay for Tittawin Management System
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+services:
+  api:
+    build:
+      target: prod
+    environment:
+      APP_ENV: prod
+    volumes: !reset []
+
+  worker:
+    build:
+      target: prod
+    environment:
+      APP_ENV: prod
+    volumes: !reset []
+    command: ["php", "bin/console", "messenger:consume", "async", "failed", "-vv", "--time-limit=3600", "--memory-limit=256M"]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      target: prod
+    volumes: !reset []
+
+  nginx:
+    depends_on:
+      api:
+        condition: service_healthy

@@ -1,0 +1,18 @@
+nelmio_api_doc:
+    documentation:
+        info:
+            title: 'Tittawin Management System API'
+            description: 'Modular monolith ERP API for commerce, inventory, production, and finance.'
+            version: '0.1.0'
+        servers:
+            - url: '%env(default::string:API_BASE_URL)%'
+              description: 'API server'
+        components:
+            securitySchemes:
+                Bearer:
+                    type: http
+                    scheme: bearer
+                    bearerFormat: JWT
+    areas:
+        path_patterns:
+            - ^/api(?!/doc)
