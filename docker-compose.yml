@@ -59,10 +59,11 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: dhi/minio:0
     restart: unless-stopped
     logging: *logging
-    command: server /data --console-address ":9001"
+    # Entrypoint is the minio binary. Runtime image runs as UID 65532 and has no shell.
+    command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tittawin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-tittawin-secret}
@@ -71,12 +72,23 @@ services:
       - "${MINIO_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+
+  # dhi/minio:0 has no curl or shell, so readiness is probed from this helper.
+  minio-health:
+    image: busybox:1.37
+    restart: unless-stopped
+    logging: *logging
+    network_mode: "service:minio"
+    depends_on:
+      minio:
+        condition: service_started
+    command: ["sleep", "infinity"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
 
   api:
     build:
@@ -93,7 +105,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      minio-health:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "php -r \"exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);\""]
