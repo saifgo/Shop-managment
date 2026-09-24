@@ -24,7 +24,12 @@ export interface ProductSummary {
   from_price: MoneyValue | null;
   primary_image_url: string | null;
   variant_count: number;
+  /** Sum of available-to-sell across active variants at the default location. */
+  available_quantity: string;
+  stock_status: StockStatus;
 }
+
+export type StockStatus = 'in_stock' | 'low_stock' | 'out_of_stock';
 
 export interface ProductVariant {
   id: string;
@@ -34,6 +39,19 @@ export interface ProductVariant {
   is_active: boolean;
   price: ResolvedPrice;
   base_price: MoneyValue;
+  available_quantity: string;
+  stock_status: StockStatus;
+  /** Admin only: physical stock including reserved units. */
+  on_hand?: string;
+}
+
+export interface VariantInput {
+  sku: string;
+  name: string;
+  base_price_amount: string;
+  base_price_currency: string;
+  attributes: Record<string, string>;
+  is_active?: boolean;
 }
 
 export interface ProductDetail extends ProductSummary {
@@ -78,6 +96,7 @@ export const catalogApi = {
     category?: string;
     visibility?: string;
     search?: string;
+    status?: 'active' | 'inactive';
   } = {}): Promise<Paginated<ProductSummary>> {
     const query = new URLSearchParams();
     if (params.page) query.set('page', String(params.page));
@@ -85,6 +104,7 @@ export const catalogApi = {
     if (params.category) query.set('category', params.category);
     if (params.visibility) query.set('visibility', params.visibility);
     if (params.search) query.set('search', params.search);
+    if (params.status) query.set('status', params.status);
 
     const qs = query.toString();
 
@@ -103,8 +123,12 @@ export const catalogApi = {
     return apiClient.patch<ProductDetail>(`/api/products/${id}`, body, token());
   },
 
-  createVariant(productId: string, body: Record<string, unknown>): Promise<ProductVariant> {
+  createVariant(productId: string, body: VariantInput): Promise<ProductVariant> {
     return apiClient.post<ProductVariant>(`/api/products/${productId}/variants`, body, token());
+  },
+
+  updateVariant(productId: string, variantId: string, body: VariantInput): Promise<ProductVariant> {
+    return apiClient.patch<ProductVariant>(`/api/products/${productId}/variants/${variantId}`, body, token());
   },
 
   uploadProductMedia(productId: string, file: File, altText?: string): Promise<ProductDetail> {
@@ -140,4 +164,15 @@ export function formatMoney(value: MoneyValue | null | undefined): string {
     currency: value.currency,
     minimumFractionDigits: 2,
   }).format(amount);
+}
+
+/** Category tree → flat list with "Parent / Child" labels for selects. */
+export function flattenCategories(
+  nodes: Array<Pick<CategoryNode, 'id' | 'name'> & { children: CategoryNode[] }>,
+  prefix = '',
+): Array<{ id: string; label: string }> {
+  return nodes.flatMap((node) => [
+    { id: node.id, label: `${prefix}${node.name}` },
+    ...flattenCategories(node.children, `${prefix}${node.name} / `),
+  ]);
 }
