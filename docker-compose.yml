@@ -151,8 +151,10 @@ services:
       context: ./deploy/nginx
     restart: unless-stopped
     logging: *logging
-    ports:
-      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
+    # No host port here: on Coolify, Traefik routes the domain to container port 80.
+    # Locally, docker-compose.override.yml publishes HTTP_PORT.
+    expose:
+      - "80"
     depends_on:
       nginx:
         condition: service_healthy

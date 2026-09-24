@@ -1,0 +1,7 @@
+# Loaded automatically by `docker compose up` when no -f is given (local use).
+# Coolify runs with an explicit -f docker-compose.yml, so this file is ignored there.
+
+services:
+  proxy:
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
