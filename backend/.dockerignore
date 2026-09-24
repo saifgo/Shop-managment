@@ -1,5 +1,7 @@
 vendor/
 var/
+.env
 .env.local
+.env.*.local
 .phpunit.cache/
 .php-cs-fixer.cache

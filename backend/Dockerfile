@@ -45,9 +45,11 @@ COPY composer.json composer.lock symfony.lock ./
 RUN composer install --no-interaction --prefer-dist --no-dev --no-scripts --optimize-autoloader
 
 COPY . .
-RUN composer dump-autoload --optimize --classmap-authoritative \
+# Symfony boots only when this file exists. Values come from the container environment.
+RUN touch .env \
+    && composer dump-autoload --optimize --classmap-authoritative \
     && mkdir -p var/cache var/log \
-    && chown -R www-data:www-data var
+    && chown -R www-data:www-data var .env
 
 COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/app.ini
 COPY docker/php/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
