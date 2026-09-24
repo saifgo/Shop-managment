@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\Sales;
 
 use App\Application\Inventory\ReservationService;
+use App\Application\Returns\ReturnedQuantities;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Sales\OrderLineStatus;
 use App\Domain\Sales\OrderStateMachine;
@@ -30,6 +31,7 @@ final class OrderService
         private OrderStateMachine $orderStateMachine,
         private UnitOfWork $unitOfWork,
         private OpenDeliveryQuantities $openDeliveryQuantities,
+        private ReturnedQuantities $returnedQuantities,
     ) {
     }
 
@@ -375,6 +377,7 @@ final class OrderService
     {
         $items = [];
         $pending = $this->openDeliveryQuantities->forOrder($order);
+        $claimed = $this->returnedQuantities->forOrder($order);
         $canDeliver = in_array($order->getStatus(), [
             OrderStatus::ReadyToDeliver,
             OrderStatus::PartiallyAllocated,
@@ -398,6 +401,7 @@ final class OrderService
                 'quantity_delivered' => $item->getQuantityDelivered()->amount(),
                 'quantity_in_open_deliveries' => ($pending[$item->getId()] ?? \App\Domain\Shared\Quantity::zero())->amount(),
                 'quantity_deliverable' => $deliverable->amount(),
+                'quantity_returnable' => ReturnedQuantities::returnable($item, $claimed)->amount(),
                 'line_status' => $item->getLineStatus()->value,
                 'unit_price' => ['amount' => $item->getUnitPrice()->amount(), 'currency' => $item->getUnitPrice()->currency()],
                 'tax_rate' => $item->getTaxRate(),

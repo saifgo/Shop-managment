@@ -151,6 +151,45 @@ final class CatalogAndFulfillmentWorkflowTest extends AuthenticatedApiTestCase
         self::assertStringContainsString('READY_TO_DELIVER to DELIVERED', $error['error']['message']);
     }
 
+    public function testReturnsAreLimitedToDeliveredUnitsNotAlreadyReturned(): void
+    {
+        $admin = $this->login()['access_token'];
+        [, $variant] = $this->findVariant($admin, 'BWL-4');
+        $order = $this->createConfirmedOrder($admin, $variant['id'], '3.0000');
+        $itemId = $order['items'][0]['id'];
+        self::assertSame('0.0000', $order['items'][0]['quantity_returnable']);
+
+        $delivery = $this->request($admin, 'POST', '/api/orders/'.$order['id'].'/create-delivery', [
+            'lines' => [['order_item_id' => $itemId, 'quantity' => '2.0000']],
+        ]);
+        foreach (['PACKED', 'DISPATCHED', 'DELIVERED'] as $status) {
+            $this->request($admin, 'POST', '/api/deliveries/'.$delivery['id'].'/transition', ['status' => $status]);
+        }
+        self::assertSame('2.0000', $this->request($admin, 'GET', '/api/orders/'.$order['id'])['items'][0]['quantity_returnable']);
+
+        $error = $this->request($admin, 'POST', '/api/returns', [
+            'order_id' => $order['id'],
+            'reason' => 'Chipped',
+            'items' => [['order_item_id' => $itemId, 'quantity' => '3.0000']],
+        ]);
+        self::assertResponseStatusCodeSame(400);
+        self::assertStringContainsString('Only 2.0000', $error['error']['message']);
+
+        $this->request($admin, 'POST', '/api/returns', [
+            'order_id' => $order['id'],
+            'reason' => 'Chipped',
+            'items' => [['order_item_id' => $itemId, 'quantity' => '1.0000']],
+        ]);
+        self::assertResponseStatusCodeSame(201);
+        self::assertSame('1.0000', $this->request($admin, 'GET', '/api/orders/'.$order['id'])['items'][0]['quantity_returnable']);
+
+        $this->request($admin, 'POST', '/api/returns', [
+            'order_id' => $order['id'],
+            'items' => [['order_item_id' => $itemId, 'quantity' => '0']],
+        ]);
+        self::assertResponseStatusCodeSame(400);
+    }
+
     public function testOrdersCanBeSearchedAndFilteredByStatus(): void
     {
         $admin = $this->login()['access_token'];
