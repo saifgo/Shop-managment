@@ -6,12 +6,15 @@ namespace App\Application\Sales;
 
 use App\Application\Inventory\ReservationService;
 use App\Application\Shared\PaginatedResult;
+use App\Domain\Documents\DocumentType;
+use App\Domain\Documents\InvoiceStatus;
 use App\Domain\Sales\DeliveryStateMachine;
 use App\Domain\Sales\DeliveryStatus;
 use App\Domain\Sales\OrderStateMachine;
 use App\Domain\Sales\OrderStatus;
 use App\Domain\Shared\EntityId;
 use App\Domain\Shared\Quantity;
+use App\Infrastructure\Persistence\Entity\Documents\CommercialDocument;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Sales\Delivery;
 use App\Infrastructure\Persistence\Entity\Sales\DeliveryLine;
@@ -31,6 +34,7 @@ final class DeliveryService
         private DeliveryStateMachine $deliveryStateMachine,
         private OrderStateMachine $orderStateMachine,
         private ReservationService $reservationService,
+        private OpenDeliveryQuantities $openDeliveryQuantities,
     ) {
     }
 
@@ -90,6 +94,9 @@ final class DeliveryService
                 $itemsById[$item->getId()] = $item;
             }
 
+            $pending = $this->openDeliveryQuantities->forOrder($order);
+            $hasQuantity = false;
+
             foreach ($lines as $linePayload) {
                 $orderItem = $itemsById[$linePayload['order_item_id']] ?? null;
 
@@ -98,11 +105,19 @@ final class DeliveryService
                 }
 
                 $quantity = Quantity::of($linePayload['quantity']);
-                $remaining = $orderItem->getRemainingDeliverableQuantity();
+
+                // Lines left at zero in the delivery form are simply not shipped this time.
+                if ($quantity->isZero()) {
+                    continue;
+                }
+
+                $remaining = OpenDeliveryQuantities::deliverable($orderItem, $pending);
+                $pending[$orderItem->getId()] = ($pending[$orderItem->getId()] ?? Quantity::zero())->add($quantity);
+                $hasQuantity = true;
 
                 if ($quantity->compare($remaining) > 0) {
                     throw new BadRequestHttpException(sprintf(
-                        'Cannot deliver %s of %s; only %s remaining.',
+                        'Cannot deliver %s of %s; only %s remaining after open deliveries.',
                         $quantity->amount(),
                         $orderItem->getSku(),
                         $remaining->amount(),
@@ -116,6 +131,10 @@ final class DeliveryService
                     $quantity,
                 );
                 $this->entityManager->persist($deliveryLine);
+            }
+
+            if (!$hasQuantity) {
+                throw new BadRequestHttpException('Enter a quantity for at least one line.');
             }
 
             $this->entityManager->persist($delivery);
@@ -178,7 +197,8 @@ final class DeliveryService
 
         foreach ($paginator as $delivery) {
             if ($delivery instanceof Delivery) {
-                $items[] = $this->serializeDeliverySummary($delivery);
+                // For one order the list is short and the UI shows what each delivery contains.
+                $items[] = $orderId !== null ? $this->serializeDelivery($delivery) : $this->serializeDeliverySummary($delivery);
             }
         }
 
@@ -342,6 +362,36 @@ final class DeliveryService
             'created_at' => $delivery->getCreatedAt()->format(DATE_ATOM),
             'dispatched_at' => $delivery->getDispatchedAt()?->format(DATE_ATOM),
             'delivered_at' => $delivery->getDeliveredAt()?->format(DATE_ATOM),
+            'is_replacement' => str_contains((string) $delivery->getNotes(), 'Replacement'),
+            'line_count' => $delivery->getLines()->count(),
+            'invoice' => $this->findActiveInvoice($delivery),
+        ];
+    }
+
+    /**
+     * @return array{id: string, document_number: string|null, status: string}|null
+     */
+    private function findActiveInvoice(Delivery $delivery): ?array
+    {
+        /** @var CommercialDocument|null $invoice */
+        $invoice = $this->entityManager->createQueryBuilder()
+            ->select('d')
+            ->from(CommercialDocument::class, 'd')
+            ->where('d.delivery = :delivery')
+            ->andWhere('d.documentType = :type')
+            ->andWhere('d.status NOT IN (:closed)')
+            ->setParameter('delivery', $delivery)
+            ->setParameter('type', DocumentType::Invoice)
+            ->setParameter('closed', [InvoiceStatus::Cancelled->value, InvoiceStatus::Credited->value])
+            ->orderBy('d.createdAt', 'DESC')
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+
+        return $invoice === null ? null : [
+            'id' => $invoice->getId(),
+            'document_number' => $invoice->getDocumentNumber(),
+            'status' => $invoice->getStatus(),
         ];
     }
 

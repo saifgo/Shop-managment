@@ -46,6 +46,7 @@ final class ProductController extends AbstractController
             visibility: $request->query->get('visibility'),
             search: $request->query->get('search'),
             portalView: $portalView,
+            status: $request->query->get('status'),
         );
 
         return $this->json($result->toArray());
@@ -121,6 +122,21 @@ final class ProductController extends AbstractController
         ]);
 
         return $this->json($variant, JsonResponse::HTTP_CREATED);
+    }
+
+    #[Route('/api/products/{id}/variants/{variantId}', name: 'api_products_variants_update', methods: ['PATCH'])]
+    #[OA\Patch(path: '/api/products/{id}/variants/{variantId}', summary: 'Update a product variant (SKU, name, price, attributes, active flag)', security: [['Bearer' => []]])]
+    public function updateVariant(string $id, string $variantId, #[MapRequestPayload] UpdateVariantRequest $payload, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::CATALOG_PRODUCTS_MANAGE);
+
+        return $this->json($this->productService->updateVariant($user, $id, $variantId, [
+            'sku' => trim($payload->sku),
+            'name' => trim($payload->name),
+            'base_price' => ['amount' => $payload->basePriceAmount, 'currency' => strtoupper($payload->basePriceCurrency)],
+            'attributes' => $payload->attributes,
+            'is_active' => $payload->isActive,
+        ]));
     }
 
     #[Route('/api/products/{id}/media', name: 'api_products_media_upload', methods: ['POST'])]
@@ -239,6 +255,7 @@ final readonly class CreateVariantRequest
         #[Assert\NotBlank]
         public string $name,
         #[Assert\NotBlank]
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a price such as 45 or 45.50.')]
         #[SerializedName('base_price_amount')]
         public string $basePriceAmount,
         #[Assert\NotBlank]
@@ -246,6 +263,31 @@ final readonly class CreateVariantRequest
         #[SerializedName('base_price_currency')]
         public string $basePriceCurrency,
         public array $attributes = [],
+    ) {
+    }
+}
+
+final readonly class UpdateVariantRequest
+{
+    /** @param array<string, string> $attributes */
+    public function __construct(
+        #[Assert\NotBlank]
+        #[Assert\Length(max: 64)]
+        public string $sku,
+        #[Assert\NotBlank]
+        #[Assert\Length(max: 200)]
+        public string $name,
+        #[Assert\NotBlank]
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a price such as 45 or 45.50.')]
+        #[SerializedName('base_price_amount')]
+        public string $basePriceAmount,
+        #[Assert\NotBlank]
+        #[Assert\Length(exactly: 3)]
+        #[SerializedName('base_price_currency')]
+        public string $basePriceCurrency,
+        public array $attributes = [],
+        #[SerializedName('is_active')]
+        public bool $isActive = true,
     ) {
     }
 }

@@ -29,6 +29,7 @@ final class OrderService
         private ReservationService $reservationService,
         private OrderStateMachine $orderStateMachine,
         private UnitOfWork $unitOfWork,
+        private OpenDeliveryQuantities $openDeliveryQuantities,
     ) {
     }
 
@@ -183,11 +184,18 @@ final class OrderService
     /**
      * @return PaginatedResult<array<string, mixed>>
      */
-    public function list(User $user, int $page, int $perPage, ?string $status = null, ?string $customerId = null): PaginatedResult
-    {
+    public function list(
+        User $user,
+        int $page,
+        int $perPage,
+        ?string $status = null,
+        ?string $customerId = null,
+        ?string $search = null,
+    ): PaginatedResult {
         $qb = $this->entityManager->createQueryBuilder()
             ->select('o')
             ->from(Order::class, 'o')
+            ->join('o.customer', 'c')
             ->where('o.companyId = :companyId')
             ->setParameter('companyId', $user->companyId()->toString())
             ->orderBy('o.createdAt', 'DESC');
@@ -199,8 +207,15 @@ final class OrderService
             $qb->andWhere('o.customer = :customer')->setParameter('customer', $customerId);
         }
 
-        if ($status !== null) {
-            $qb->andWhere('o.status = :status')->setParameter('status', $status);
+        // Accepts a single status or a comma-separated list (e.g. "SUBMITTED,CONFIRMED").
+        if ($status !== null && $status !== '') {
+            $statuses = array_values(array_filter(array_map('trim', explode(',', $status))));
+            $qb->andWhere('o.status IN (:statuses)')->setParameter('statuses', $statuses);
+        }
+
+        if ($search !== null && trim($search) !== '') {
+            $qb->andWhere('LOWER(o.reference) LIKE :search OR LOWER(c.displayName) LIKE :search')
+                ->setParameter('search', '%'.mb_strtolower(trim($search)).'%');
         }
 
         $qb->setFirstResult(max(0, ($page - 1) * $perPage))->setMaxResults($perPage);
@@ -359,8 +374,17 @@ final class OrderService
     private function serializeOrder(Order $order, User $user): array
     {
         $items = [];
+        $pending = $this->openDeliveryQuantities->forOrder($order);
+        $canDeliver = in_array($order->getStatus(), [
+            OrderStatus::ReadyToDeliver,
+            OrderStatus::PartiallyAllocated,
+            OrderStatus::PartiallyDelivered,
+        ], true);
+        $anyDeliverable = false;
 
         foreach ($order->getItems() as $item) {
+            $deliverable = OpenDeliveryQuantities::deliverable($item, $pending);
+            $anyDeliverable = $anyDeliverable || !$deliverable->isZero();
             $items[] = [
                 'id' => $item->getId(),
                 'variant_id' => $item->getVariant()->getId(),
@@ -372,6 +396,8 @@ final class OrderService
                 'quantity_reserved' => $item->getQuantityReserved()->amount(),
                 'quantity_backordered' => $item->getQuantityBackordered()->amount(),
                 'quantity_delivered' => $item->getQuantityDelivered()->amount(),
+                'quantity_in_open_deliveries' => ($pending[$item->getId()] ?? \App\Domain\Shared\Quantity::zero())->amount(),
+                'quantity_deliverable' => $deliverable->amount(),
                 'line_status' => $item->getLineStatus()->value,
                 'unit_price' => ['amount' => $item->getUnitPrice()->amount(), 'currency' => $item->getUnitPrice()->currency()],
                 'tax_rate' => $item->getTaxRate(),
@@ -405,6 +431,7 @@ final class OrderService
             'can_confirm' => !$user->isPortalUser() && $order->getStatus() === OrderStatus::Submitted,
             'can_cancel' => !in_array($order->getStatus(), [OrderStatus::Delivered, OrderStatus::Cancelled], true),
             'can_reserve' => !$user->isPortalUser() && in_array($order->getStatus(), [OrderStatus::Confirmed, OrderStatus::PartiallyAllocated, OrderStatus::ReadyToDeliver], true),
+            'can_create_delivery' => !$user->isPortalUser() && $canDeliver && $anyDeliverable,
         ];
     }
 }
