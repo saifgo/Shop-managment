@@ -1,10 +1,11 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ImageIcon, PlusIcon, SearchIcon, TagsIcon } from 'lucide-react'
+import { PlusIcon, SearchIcon, TagsIcon } from 'lucide-react'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { PaginationBar } from '@/components/PaginationBar'
+import { ProductImage } from '@/components/ProductImage'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable, type ResponsiveTableColumn } from '@/components/ResponsiveTable'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -16,7 +17,6 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { PermissionGate } from '@/features/auth/components/PermissionGate'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
 import { catalogApi, flattenCategories, type ProductSummary } from '@/lib/api/catalog'
-import { apiUrl } from '@/lib/api/client'
 import { PERMISSIONS } from '@/lib/auth/permissions'
 
 const PER_PAGE = 25
@@ -28,18 +28,12 @@ const columns: ResponsiveTableColumn<ProductSummary>[] = [
     primary: true,
     cell: (product) => (
       <Link to={`/admin/catalog/${product.id}`} className="group flex items-center gap-3">
-        {product.primary_image_url ? (
-          <img
-            src={apiUrl(product.primary_image_url)}
-            alt=""
-            className="size-10 shrink-0 rounded-md border object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-            <ImageIcon className="size-4" />
-          </div>
-        )}
+        <ProductImage
+          url={product.primary_image_url}
+          alt=""
+          className="size-10 shrink-0 rounded-md border"
+          iconClassName="size-4"
+        />
         <span className="flex min-w-0 flex-col">
           <span className="truncate font-medium underline-offset-4 group-hover:underline">{product.name}</span>
           <span className="truncate text-xs text-muted-foreground">

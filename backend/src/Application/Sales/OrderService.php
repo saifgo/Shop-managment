@@ -175,6 +175,11 @@ final class OrderService
                 throw new BadRequestHttpException('Order cannot be cancelled.');
             }
 
+            // Once confirmed, stock is reserved and production may be planned: customers must ask the shop.
+            if ($user->isPortalUser() && $order->getStatus() !== OrderStatus::Submitted) {
+                throw new BadRequestHttpException('This order is already confirmed. Please contact us to change or cancel it.');
+            }
+
             $this->orderStateMachine->assertTransition($order->getStatus(), OrderStatus::Cancelled);
             $this->reservationService->releaseOrder($order, EntityId::fromString($user->getId()));
             $order->transitionTo(OrderStatus::Cancelled, EntityId::fromString($user->getId()), $reason ?? 'Order cancelled');
@@ -433,7 +438,9 @@ final class OrderService
             'items' => $items,
             'status_history' => $history,
             'can_confirm' => !$user->isPortalUser() && $order->getStatus() === OrderStatus::Submitted,
-            'can_cancel' => !in_array($order->getStatus(), [OrderStatus::Delivered, OrderStatus::Cancelled], true),
+            'can_cancel' => $user->isPortalUser()
+                ? $order->getStatus() === OrderStatus::Submitted
+                : !in_array($order->getStatus(), [OrderStatus::Delivered, OrderStatus::Cancelled], true),
             'can_reserve' => !$user->isPortalUser() && in_array($order->getStatus(), [OrderStatus::Confirmed, OrderStatus::PartiallyAllocated, OrderStatus::ReadyToDeliver], true),
             'can_create_delivery' => !$user->isPortalUser() && $canDeliver && $anyDeliverable,
         ];

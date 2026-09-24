@@ -190,6 +190,28 @@ final class CatalogAndFulfillmentWorkflowTest extends AuthenticatedApiTestCase
         self::assertResponseStatusCodeSame(400);
     }
 
+    public function testCustomersCanOnlyCancelOrdersTheShopHasNotConfirmed(): void
+    {
+        $customer = $this->login('customer@tittawin.local')['access_token'];
+        $admin = $this->login()['access_token'];
+        [, $variant] = $this->findVariant($admin, 'BWL-4');
+
+        $first = $this->request($customer, 'POST', '/api/orders', ['items' => [['variant_id' => $variant['id'], 'quantity' => '1']]]);
+        self::assertResponseStatusCodeSame(201);
+        self::assertTrue($first['can_cancel']);
+        $cancelled = $this->request($customer, 'POST', '/api/orders/'.$first['id'].'/cancel', ['reason' => 'Changed my mind']);
+        self::assertResponseIsSuccessful();
+        self::assertSame('CANCELLED', $cancelled['status']);
+
+        $second = $this->request($customer, 'POST', '/api/orders', ['items' => [['variant_id' => $variant['id'], 'quantity' => '1']]]);
+        $this->request($admin, 'POST', '/api/orders/'.$second['id'].'/confirm');
+        self::assertFalse($this->request($customer, 'GET', '/api/orders/'.$second['id'])['can_cancel']);
+
+        $error = $this->request($customer, 'POST', '/api/orders/'.$second['id'].'/cancel', []);
+        self::assertResponseStatusCodeSame(400);
+        self::assertStringContainsString('contact us', $error['error']['message']);
+    }
+
     public function testOrdersCanBeSearchedAndFilteredByStatus(): void
     {
         $admin = $this->login()['access_token'];

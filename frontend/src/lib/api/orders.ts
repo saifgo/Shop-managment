@@ -50,6 +50,7 @@ export interface OrderDetail extends OrderSummary {
   items: Array<{
     id: string
     variant_id: string
+    product_id: string
     product_name: string
     variant_name: string
     sku: string
@@ -61,6 +62,8 @@ export interface OrderDetail extends OrderSummary {
     quantity_in_open_deliveries: string
     /** Units that can still be put on a new delivery. */
     quantity_deliverable: string
+    /** Delivered units not already claimed by a return request. */
+    quantity_returnable: string
     line_status: string
     unit_price: MoneyAmount
     tax_rate: string

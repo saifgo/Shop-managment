@@ -1,60 +1,91 @@
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
-import { MoneyText } from '@/components/MoneyText'
+import { useSearchParams } from 'react-router-dom'
+import { SearchIcon } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
+import { PaginationBar } from '@/components/PaginationBar'
 import { QueryState } from '@/components/QueryState'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { catalogApi, type CategoryNode } from '@/lib/api/catalog'
-import { apiUrl } from '@/lib/api/client'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useDebouncedValue } from '@/hooks/use-debounced-value'
+import { ProductCard } from '@/features/portal/components/ProductCard'
+import { catalogApi, flattenCategories } from '@/lib/api/catalog'
+import { cn } from '@/lib/utils'
+
+const PER_PAGE = 24
 
 export function PortalCatalogPage() {
-  const [categoryId, setCategoryId] = useState('')
-  const [search, setSearch] = useState('')
+  const [params, setParams] = useSearchParams()
+  const categoryId = params.get('category') ?? ''
+  const [search, setSearch] = useState(params.get('q') ?? '')
+  const [page, setPage] = useState(1)
+  const debouncedSearch = useDebouncedValue(search.trim())
 
   const { data: categories } = useQuery({
     queryKey: ['portal', 'categories'],
     queryFn: () => catalogApi.listCategories(),
   })
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['portal', 'products', categoryId, search],
+  const { data, isLoading, error, isFetching } = useQuery({
+    queryKey: ['portal', 'products', categoryId, debouncedSearch, page],
     queryFn: () =>
       catalogApi.listProducts({
         category: categoryId || undefined,
-        search: search || undefined,
-        per_page: 24,
+        search: debouncedSearch || undefined,
+        per_page: PER_PAGE,
+        page,
       }),
+    placeholderData: keepPreviousData,
   })
+
+  const selectCategory = (id: string) => {
+    setPage(1)
+    setParams(id ? { category: id } : {}, { replace: true })
+  }
+
+  const categoryOptions = [{ id: '', label: 'All' }, ...flattenCategories(categories?.items ?? [])]
 
   return (
     <section className="flex flex-col gap-6">
-      <PageHeader title="Catalog" description="Browse products with your negotiated pricing applied by the server." />
+      <PageHeader title="Shop" description="Handmade pottery. Prices shown are your prices." />
 
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <NativeSelect
-          className="w-full sm:w-56"
-          value={categoryId}
-          onChange={(e) => setCategoryId(e.target.value)}
-          aria-label="Filter by category"
-        >
-          <NativeSelectOption value="">All categories</NativeSelectOption>
-          {flattenCategories(categories?.items ?? []).map((category) => (
-            <NativeSelectOption key={category.id} value={category.id}>
-              {category.label}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <Input
-          placeholder="Search products"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search products"
-          className="sm:max-w-xs"
-        />
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <ScrollArea className="max-w-full">
+          <div className="flex gap-2 pb-1" role="group" aria-label="Filter by category">
+            {categoryOptions.map((category) => (
+              <button
+                key={category.id || 'all'}
+                type="button"
+                onClick={() => selectCategory(category.id)}
+                aria-pressed={categoryId === category.id}
+                className={cn(
+                  'shrink-0 rounded-full border px-3 py-1 text-sm whitespace-nowrap transition-colors',
+                  categoryId === category.id
+                    ? 'border-foreground bg-foreground text-background'
+                    : 'bg-background text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {category.label}
+              </button>
+            ))}
+          </div>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
+        <InputGroup className="md:max-w-xs">
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            placeholder="Search products"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              setPage(1)
+            }}
+            aria-label="Search products"
+          />
+        </InputGroup>
       </div>
 
       <QueryState
@@ -63,42 +94,42 @@ export function PortalCatalogPage() {
         isEmpty={data?.items.length === 0}
         emptyTitle="No products match your filters"
         emptyDescription="Try a different category or search term."
+        loadingSkeleton={<CatalogSkeleton />}
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {(data?.items ?? []).map((product) => (
-            <Link key={product.id} to={`/portal/catalog/${product.id}`}>
-              <Card>
-                {product.primary_image_url ? (
-                  <img src={apiUrl(product.primary_image_url)} alt={product.name} loading="lazy" />
-                ) : (
-                  <div className="aspect-[4/3] bg-muted" />
-                )}
-                <CardHeader>
-                  <CardTitle>{product.name}</CardTitle>
-                  <CardDescription>{product.category_name ?? 'Uncategorized'}</CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-2">
-                  {product.from_price ? (
-                    <MoneyText amount={product.from_price.amount} currency={product.from_price.currency} />
-                  ) : (
-                    '—'
-                  )}
-                  <Badge variant="secondary">
-                    {product.backorder_policy === 'allow' ? 'Backorders allowed' : 'In-stock only'}
-                  </Badge>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+        <div className={cn('flex flex-col gap-6', isFetching && 'opacity-70 transition-opacity')}>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
+            {(data?.items ?? []).map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+          {data ? (
+            <PaginationBar
+              page={data.meta.page}
+              totalPages={data.meta.total_pages}
+              total={data.meta.total}
+              noun={data.meta.total === 1 ? 'product' : 'products'}
+              onPageChange={(next) => {
+                setPage(next)
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+            />
+          ) : null}
         </div>
       </QueryState>
     </section>
   )
 }
 
-function flattenCategories(nodes: CategoryNode[], prefix = ''): Array<{ id: string; label: string }> {
-  return nodes.flatMap((node) => [
-    { id: node.id, label: `${prefix}${node.name}` },
-    ...flattenCategories(node.children, `${prefix}${node.name} / `),
-  ])
+function CatalogSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
+      {Array.from({ length: 8 }, (_, index) => (
+        <div key={index} className="flex flex-col gap-3">
+          <Skeleton className="aspect-square rounded-xl" />
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="h-4 w-1/3" />
+        </div>
+      ))}
+    </div>
+  )
 }
