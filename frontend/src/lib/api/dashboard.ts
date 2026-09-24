@@ -16,6 +16,27 @@ export interface AdminDashboardSummary {
   total_receivable: { amount: string; currency: string }
   overdue_receivable: { amount: string; currency: string }
   low_stock_variants: number
+  orders_to_confirm: number
+  orders_ready_to_deliver: number
+  open_returns: number
+  sales_this_month: { amount: string; currency: string; order_count: number }
+  recent_orders: Array<{
+    id: string
+    reference: string
+    status: string
+    customer_name: string
+    grand_total: { amount: string; currency: string }
+    created_at: string
+  }>
+  low_stock_items: Array<{
+    variant_id: string
+    product_id: string
+    product_name: string
+    variant_name: string
+    sku: string
+    available_to_sell: string
+    physical_on_hand: string
+  }>
 }
 
 export interface PortalDashboardSummary {

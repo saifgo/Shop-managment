@@ -3,8 +3,8 @@ import {
   ClipboardListIcon,
   FileTextIcon,
   HouseIcon,
-  PackageIcon,
   ShoppingCartIcon,
+  StoreIcon,
   Undo2Icon,
   UserIcon,
 } from 'lucide-react'
@@ -18,7 +18,7 @@ export interface PortalNavItem {
 
 export const PORTAL_PRIMARY_NAV: PortalNavItem[] = [
   { to: '/portal', label: 'Home', icon: HouseIcon, end: true },
-  { to: '/portal/catalog', label: 'Catalog', icon: PackageIcon },
+  { to: '/portal/catalog', label: 'Shop', icon: StoreIcon },
   { to: '/portal/checkout', label: 'Cart', icon: ShoppingCartIcon },
   { to: '/portal/orders', label: 'Orders', icon: ClipboardListIcon },
 ]

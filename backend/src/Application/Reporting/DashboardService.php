@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace App\Application\Reporting;
 
+use App\Application\Catalog\ProductService;
 use App\Application\Finance\FinanceProjectionService;
 use App\Application\Payments\CustomerReceivablesService;
 use App\Domain\Documents\DocumentType;
 use App\Domain\Documents\InvoiceStatus;
 use App\Domain\Production\ProductionStatus;
+use App\Domain\Returns\ReturnStatus;
 use App\Domain\Sales\DeliveryStatus;
 use App\Domain\Sales\OrderStatus;
 use App\Domain\Shared\Money;
@@ -19,6 +21,7 @@ use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Inventory\StockBalance;
 use App\Infrastructure\Persistence\Entity\Production\ProductionOrder;
 use App\Infrastructure\Persistence\Entity\Production\StageExecution;
+use App\Infrastructure\Persistence\Entity\Returns\ReturnRequest;
 use App\Infrastructure\Persistence\Entity\Sales\Delivery;
 use App\Infrastructure\Persistence\Entity\Sales\Order;
 use App\Infrastructure\Persistence\Entity\Sales\OrderItem;
@@ -100,7 +103,117 @@ final class DashboardService
             'total_receivable' => $receivables['total_receivable'],
             'overdue_receivable' => $receivables['overdue_receivable'],
             'low_stock_variants' => $lowStock,
+            'orders_to_confirm' => $this->countOrders($companyId, [OrderStatus::Submitted]),
+            'orders_ready_to_deliver' => $this->countOrders($companyId, [OrderStatus::ReadyToDeliver, OrderStatus::PartiallyDelivered]),
+            'open_returns' => (int) $this->entityManager->createQueryBuilder()
+                ->select('COUNT(r.id)')
+                ->from(ReturnRequest::class, 'r')
+                ->where('r.companyId = :companyId')
+                ->andWhere('r.status != :resolved')
+                ->setParameter('companyId', $companyId)
+                ->setParameter('resolved', ReturnStatus::Resolved->value)
+                ->getQuery()
+                ->getSingleScalarResult(),
+            'sales_this_month' => $this->salesSince($companyId, new \DateTimeImmutable('first day of this month 00:00:00')),
+            'recent_orders' => $this->recentOrders($companyId),
+            'low_stock_items' => $this->lowStockItems($companyId),
         ];
+    }
+
+    /** @param list<OrderStatus> $statuses */
+    private function countOrders(string $companyId, array $statuses): int
+    {
+        return (int) $this->entityManager->createQueryBuilder()
+            ->select('COUNT(o.id)')
+            ->from(Order::class, 'o')
+            ->where('o.companyId = :companyId')
+            ->andWhere('o.status IN (:statuses)')
+            ->setParameter('companyId', $companyId)
+            ->setParameter('statuses', array_map(static fn (OrderStatus $s) => $s->value, $statuses))
+            ->getQuery()
+            ->getSingleScalarResult();
+    }
+
+    /** @return array{amount: string, currency: string, order_count: int} */
+    private function salesSince(string $companyId, \DateTimeImmutable $since): array
+    {
+        /** @var list<Order> $orders */
+        $orders = $this->entityManager->createQueryBuilder()
+            ->select('o')
+            ->from(Order::class, 'o')
+            ->where('o.companyId = :companyId')
+            ->andWhere('o.createdAt >= :since')
+            ->andWhere('o.status NOT IN (:excluded)')
+            ->setParameter('companyId', $companyId)
+            ->setParameter('since', $since)
+            ->setParameter('excluded', [OrderStatus::Cancelled->value, OrderStatus::Draft->value])
+            ->getQuery()
+            ->getResult();
+
+        $total = '0.0000';
+
+        foreach ($orders as $order) {
+            $total = bcadd($total, $order->getGrandTotal()->amount(), 4);
+        }
+
+        return ['amount' => $total, 'currency' => 'TND', 'order_count' => count($orders)];
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function recentOrders(string $companyId): array
+    {
+        /** @var list<Order> $orders */
+        $orders = $this->entityManager->createQueryBuilder()
+            ->select('o')
+            ->from(Order::class, 'o')
+            ->where('o.companyId = :companyId')
+            ->setParameter('companyId', $companyId)
+            ->orderBy('o.createdAt', 'DESC')
+            ->setMaxResults(6)
+            ->getQuery()
+            ->getResult();
+
+        return array_map(static fn (Order $order): array => [
+            'id' => $order->getId(),
+            'reference' => $order->getReference(),
+            'status' => $order->getStatus()->value,
+            'customer_name' => $order->getCustomer()->getDisplayName(),
+            'grand_total' => ['amount' => $order->getGrandTotal()->amount(), 'currency' => $order->getCurrency()],
+            'created_at' => $order->getCreatedAt()->format(\DateTimeInterface::ATOM),
+        ], $orders);
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function lowStockItems(string $companyId): array
+    {
+        /** @var list<StockBalance> $balances */
+        $balances = $this->entityManager->createQueryBuilder()
+            ->select('b', 'v', 'p')
+            ->from(StockBalance::class, 'b')
+            ->join('b.variant', 'v')
+            ->join('v.product', 'p')
+            ->where('b.companyId = :companyId')
+            ->andWhere('v.isActive = true')
+            ->andWhere('p.isActive = true')
+            ->setParameter('companyId', $companyId)
+            ->getQuery()
+            ->getResult();
+
+        $low = array_values(array_filter(
+            $balances,
+            static fn (StockBalance $b): bool => bccomp($b->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD, 4) < 0,
+        ));
+        usort($low, static fn (StockBalance $a, StockBalance $b): int => bccomp($a->getAvailableToSell()->amount(), $b->getAvailableToSell()->amount(), 4));
+
+        return array_map(static fn (StockBalance $b): array => [
+            'variant_id' => $b->getVariant()->getId(),
+            'product_id' => $b->getVariant()->getProduct()->getId(),
+            'product_name' => $b->getVariant()->getProduct()->getName(),
+            'variant_name' => $b->getVariant()->getName(),
+            'sku' => $b->getVariant()->getSku(),
+            'available_to_sell' => $b->getAvailableToSell()->amount(),
+            'physical_on_hand' => $b->getPhysicalOnHand()->amount(),
+        ], array_slice($low, 0, 8));
     }
 
     /** @return array<string, mixed> */
@@ -242,7 +355,7 @@ final class DashboardService
         $count = 0;
 
         foreach ($balances as $balance) {
-            if (bccomp($balance->getAvailableToSell()->amount(), '5.0000', 4) < 0) {
+            if (bccomp($balance->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD, 4) < 0) {
                 ++$count;
             }
         }
