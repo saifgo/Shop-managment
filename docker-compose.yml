@@ -82,7 +82,6 @@ services:
     build:
       context: ./backend
       target: prod
-    pull_policy: build
     restart: unless-stopped
     logging: *logging
     environment:
@@ -106,7 +105,6 @@ services:
     build:
       context: ./backend
       target: nginx
-    pull_policy: build
     restart: unless-stopped
     logging: *logging
     depends_on:
@@ -123,7 +121,6 @@ services:
     build:
       context: ./backend
       target: prod
-    pull_policy: build
     restart: unless-stopped
     logging: *logging
     stop_grace_period: 30s
@@ -140,7 +137,6 @@ services:
       target: prod
       args:
         VITE_API_BASE_URL: ${PUBLIC_API_URL:-}
-    pull_policy: build
     restart: unless-stopped
     logging: *logging
     healthcheck:
@@ -153,7 +149,6 @@ services:
   proxy:
     build:
       context: ./deploy/nginx
-    pull_policy: build
     restart: unless-stopped
     logging: *logging
     ports:
