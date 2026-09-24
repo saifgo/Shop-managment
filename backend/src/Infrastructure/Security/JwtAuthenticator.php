@@ -29,15 +29,12 @@ final class JwtAuthenticator extends AbstractAuthenticator
 
         $path = $request->getPathInfo();
 
-        if (in_array($path, ['/api/health', '/api/ready', '/api/auth/login', '/api/auth/refresh'], true)) {
+        if (str_starts_with($path, '/api/media/') && $request->isMethod('GET')) {
             return false;
         }
 
-        if (str_starts_with($path, '/api/doc')) {
-            return false;
-        }
-
-        return true;
+        // Exact matches only: a '/api/doc' prefix check would also skip /api/documents.
+        return !in_array($path, ['/api/health', '/api/ready', '/api/auth/login', '/api/auth/refresh', '/api/doc', '/api/doc.json'], true);
     }
 
     public function authenticate(Request $request): SelfValidatingPassport

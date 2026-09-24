@@ -27,7 +27,9 @@ use App\Infrastructure\Persistence\Entity\Purchasing\SupplierPaymentAllocation;
 use App\Infrastructure\Persistence\Entity\Purchasing\SupplierProduct;
 use App\Infrastructure\Persistence\UnitOfWork;
 use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 final class PurchasingService
@@ -46,19 +48,30 @@ final class PurchasingService
      */
     public function createSupplier(User $user, array $payload): array
     {
-        $supplier = new Supplier(
-            EntityId::generate(),
-            $user->companyId(),
-            $payload['code'],
-            $payload['name'],
-            $payload['contact_email'] ?? null,
-            $payload['contact_phone'] ?? null,
-            $payload['address'] ?? null,
-            $payload['tax_id'] ?? null,
-        );
-        $this->entityManager->persist($supplier);
+        return $this->unitOfWork->transactional(function () use ($user, $payload): array {
+            $duplicate = $this->entityManager->getRepository(Supplier::class)->findOneBy([
+                'companyId' => $user->companyId()->toString(),
+                'code' => $payload['code'],
+            ]);
 
-        return $this->serializeSupplier($supplier);
+            if ($duplicate !== null) {
+                throw new ConflictHttpException(sprintf('A supplier with code "%s" already exists.', $payload['code']));
+            }
+
+            $supplier = new Supplier(
+                EntityId::generate(),
+                $user->companyId(),
+                $payload['code'],
+                $payload['name'],
+                $payload['contact_email'] ?? null,
+                $payload['contact_phone'] ?? null,
+                $payload['address'] ?? null,
+                $payload['tax_id'] ?? null,
+            );
+            $this->entityManager->persist($supplier);
+
+            return $this->serializeSupplier($supplier);
+        });
     }
 
     /** @return PaginatedResult<array<string, mixed>> */
@@ -73,11 +86,14 @@ final class PurchasingService
             ->setFirstResult(max(0, ($page - 1) * $perPage))
             ->setMaxResults($perPage);
 
-        /** @var list<Supplier> $suppliers */
-        $suppliers = $qb->getQuery()->getResult();
-        $items = array_map(fn(Supplier $s) => $this->serializeSupplier($s), $suppliers);
+        $paginator = new Paginator($qb, fetchJoinCollection: false);
+        $items = [];
 
-        return new PaginatedResult($items, $page, $perPage, count($suppliers));
+        foreach ($paginator as $supplier) {
+            $items[] = $this->serializeSupplier($supplier);
+        }
+
+        return new PaginatedResult($items, $page, $perPage, count($paginator));
     }
 
     /** @return array<string, mixed> */
@@ -93,25 +109,27 @@ final class PurchasingService
      */
     public function addSupplierProduct(User $user, string $supplierId, array $payload): array
     {
-        $supplier = $this->findSupplier($user, $supplierId);
-        $variant = $this->findVariant($user, $payload['variant_id']);
+        return $this->unitOfWork->transactional(function () use ($user, $supplierId, $payload): array {
+            $supplier = $this->findSupplier($user, $supplierId);
+            $variant = $this->findVariant($user, $payload['variant_id']);
 
-        $product = new SupplierProduct(
-            EntityId::generate(),
-            $supplier,
-            $variant,
-            Money::of($payload['purchase_price'], $payload['currency']),
-            $payload['supplier_sku'] ?? null,
-            $payload['lead_time_days'] ?? null,
-            $payload['minimum_order_qty'] ?? null,
-        );
-        $this->entityManager->persist($product);
+            $product = new SupplierProduct(
+                EntityId::generate(),
+                $supplier,
+                $variant,
+                Money::of($payload['purchase_price'], $payload['currency']),
+                $payload['supplier_sku'] ?? null,
+                $payload['lead_time_days'] ?? null,
+                $payload['minimum_order_qty'] ?? null,
+            );
+            $this->entityManager->persist($product);
 
-        return $this->serializeSupplierProduct($product);
+            return $this->serializeSupplierProduct($product);
+        });
     }
 
     /**
-     * @param array{supplier_id: string, currency: string, expected_at?: string, notes?: string, items: list<array{variant_id: string, quantity: string, unit_price: string}>} $payload
+     * @param array{supplier_id: string, currency: string, expected_at?: string, notes?: string, items: list<array<string, mixed>>} $payload
      *
      * @return array<string, mixed>
      */
@@ -148,14 +166,26 @@ final class PurchasingService
                 $idempotencyKey,
             );
 
-            foreach ($payload['items'] as $line) {
-                $variant = $this->findVariant($user, $line['variant_id']);
+            foreach ($payload['items'] as $index => $line) {
+                $variant = $this->findVariant($user, (string) ($line['variant_id'] ?? ''));
+
+                try {
+                    $quantity = Quantity::of((string) ($line['quantity'] ?? ''));
+                    $unitPrice = Money::of((string) ($line['unit_price'] ?? ''), $payload['currency']);
+                } catch (\InvalidArgumentException) {
+                    throw new BadRequestHttpException(sprintf('Line %d: quantity and unit_price must be non-negative numbers with at most 4 decimals.', $index + 1));
+                }
+
+                if ($quantity->isZero() || $unitPrice->isNegative()) {
+                    throw new BadRequestHttpException(sprintf('Line %d: quantity must be positive and unit_price cannot be negative.', $index + 1));
+                }
+
                 $item = new PurchaseOrderItem(
                     EntityId::generate(),
                     $po,
                     $variant,
-                    Quantity::of($line['quantity']),
-                    Money::of($line['unit_price'], $payload['currency']),
+                    $quantity,
+                    $unitPrice,
                 );
                 $this->entityManager->persist($item);
             }
@@ -183,11 +213,14 @@ final class PurchasingService
             $qb->andWhere('p.supplier = :supplier')->setParameter('supplier', $supplierId);
         }
 
-        /** @var list<PurchaseOrder> $orders */
-        $orders = $qb->getQuery()->getResult();
-        $items = array_map(fn(PurchaseOrder $po) => $this->serializePurchaseOrderSummary($po), $orders);
+        $paginator = new Paginator($qb, fetchJoinCollection: false);
+        $items = [];
 
-        return new PaginatedResult($items, $page, $perPage, count($orders));
+        foreach ($paginator as $po) {
+            $items[] = $this->serializePurchaseOrderSummary($po);
+        }
+
+        return new PaginatedResult($items, $page, $perPage, count($paginator));
     }
 
     /** @return array<string, mixed> */
@@ -294,27 +327,29 @@ final class PurchasingService
      */
     public function createSupplierInvoice(User $user, array $payload): array
     {
-        $supplier = $this->findSupplier($user, $payload['supplier_id']);
-        $po = null;
+        return $this->unitOfWork->transactional(function () use ($user, $payload): array {
+            $supplier = $this->findSupplier($user, $payload['supplier_id']);
+            $po = null;
 
-        if (isset($payload['purchase_order_id'])) {
-            $po = $this->findPurchaseOrder($user, $payload['purchase_order_id']);
-        }
+            if (isset($payload['purchase_order_id'])) {
+                $po = $this->findPurchaseOrder($user, $payload['purchase_order_id']);
+            }
 
-        $invoice = new SupplierInvoice(
-            EntityId::generate(),
-            $user->companyId(),
-            $supplier,
-            $payload['invoice_number'],
-            Money::of($payload['total_amount'], $payload['currency']),
-            new \DateTimeImmutable($payload['issued_at']),
-            $po,
-            isset($payload['due_date']) ? new \DateTimeImmutable($payload['due_date']) : null,
-            $payload['notes'] ?? null,
-        );
-        $this->entityManager->persist($invoice);
+            $invoice = new SupplierInvoice(
+                EntityId::generate(),
+                $user->companyId(),
+                $supplier,
+                $payload['invoice_number'],
+                Money::of($payload['total_amount'], $payload['currency']),
+                new \DateTimeImmutable($payload['issued_at']),
+                $po,
+                isset($payload['due_date']) ? new \DateTimeImmutable($payload['due_date']) : null,
+                $payload['notes'] ?? null,
+            );
+            $this->entityManager->persist($invoice);
 
-        return $this->serializeSupplierInvoice($invoice);
+            return $this->serializeSupplierInvoice($invoice);
+        });
     }
 
     /**
@@ -602,6 +637,8 @@ final class PurchasingService
                 'id' => $item->getId(),
                 'variant_id' => $item->getVariant()->getId(),
                 'sku' => $item->getVariant()->getSku(),
+                'product_name' => $item->getVariant()->getProduct()->getName(),
+                'variant_name' => $item->getVariant()->getName(),
                 'quantity_ordered' => $item->getQuantityOrdered()->amount(),
                 'quantity_received' => $item->getQuantityReceived()->amount(),
                 'unit_price' => ['amount' => $item->getUnitPrice()->amount(), 'currency' => $po->getCurrency()],
@@ -649,9 +686,9 @@ final class PurchasingService
             'purchase_order_id' => $invoice->getPurchaseOrder()?->getId(),
             'invoice_number' => $invoice->getInvoiceNumber(),
             'status' => $invoice->getStatus()->value,
-            'total_amount' => ['amount' => $invoice->getTotalAmount()->amount(), 'currency' => $invoice->getCurrency()],
-            'amount_paid' => ['amount' => $invoice->getAmountPaid()->amount(), 'currency' => $invoice->getCurrency()],
-            'amount_due' => ['amount' => $invoice->getAmountDue()->amount(), 'currency' => $invoice->getCurrency()],
+            'total_amount' => ['amount' => $invoice->getTotalAmount()->amount(), 'currency' => $invoice->getTotalAmount()->currency()],
+            'amount_paid' => ['amount' => $invoice->getAmountPaid()->amount(), 'currency' => $invoice->getTotalAmount()->currency()],
+            'amount_due' => ['amount' => $invoice->getAmountDue()->amount(), 'currency' => $invoice->getTotalAmount()->currency()],
             'issued_at' => $invoice->getIssuedAt()->format('Y-m-d'),
             'due_date' => $invoice->getDueDate()?->format('Y-m-d'),
             'notes' => $invoice->getNotes(),

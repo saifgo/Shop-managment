@@ -24,7 +24,10 @@ security:
         - { path: ^/api/ready, roles: PUBLIC_ACCESS }
         - { path: ^/api/auth/login, roles: PUBLIC_ACCESS }
         - { path: ^/api/auth/refresh, roles: PUBLIC_ACCESS }
-        - { path: ^/api/doc, roles: PUBLIC_ACCESS }
+        # Anchored so it only exposes /api/doc and /api/doc.json, not /api/documents.
+        - { path: ^/api/doc(\.json)?$, roles: PUBLIC_ACCESS }
+        # Uploaded product pictures, loaded by <img> tags that cannot send a bearer token.
+        - { path: ^/api/media/, roles: PUBLIC_ACCESS, methods: [GET] }
         - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:

@@ -9,6 +9,11 @@ export interface ApiErrorBody {
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/** Resolves API-relative URLs (e.g. uploaded pictures at /api/media/…) against the API host. */
+export function apiUrl(url: string): string {
+  return url.startsWith('/') ? `${baseURL}${url}` : url;
+}
+
 export class ApiError extends Error {
   constructor(public readonly body: ApiErrorBody) {
     super(body.error?.message ?? 'Request failed');
@@ -35,7 +40,8 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'Content-Type': 'application/json',
+    // FormData bodies need the browser to set the multipart boundary itself.
+    ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     'X-Correlation-Id': correlationId,
     ...(init?.headers as Record<string, string> | undefined),
   };
@@ -91,11 +97,14 @@ export const apiClient = {
     });
   },
 
-  post<T>(path: string, body?: unknown, accessToken?: string): Promise<T> {
+  post<T>(path: string, body?: unknown, accessToken?: string, extraHeaders?: Record<string, string>): Promise<T> {
     return request<T>(path, {
       method: 'POST',
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      body: body instanceof FormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
+      headers: {
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...extraHeaders,
+      },
     });
   },
 
@@ -103,6 +112,21 @@ export const apiClient = {
     return request<T>(path, {
       method: 'PATCH',
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+  },
+
+  put<T>(path: string, body?: unknown, accessToken?: string): Promise<T> {
+    return request<T>(path, {
+      method: 'PUT',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+    });
+  },
+
+  delete<T>(path: string, accessToken?: string): Promise<T> {
+    return request<T>(path, {
+      method: 'DELETE',
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
   },

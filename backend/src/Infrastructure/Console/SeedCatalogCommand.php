@@ -70,7 +70,7 @@ final class SeedCatalogCommand extends Command
         $priceList = new PriceList(EntityId::generate(), $companyId, 'default', 'Default Price List', 'TND', true);
         $this->entityManager->persist($priceList);
 
-        $tagine = $this->createProduct(
+        $tagineVariants = $this->createProduct(
             $companyId,
             $tableware,
             'Berber Tagine',
@@ -120,34 +120,31 @@ final class SeedCatalogCommand extends Command
         $portalCustomer = $this->createPortalCustomer($companyId);
         $wholesaleCustomer = $this->createWholesaleCustomer($companyId);
 
-        /** @var ProductVariant|null $mediumTagine */
-        $mediumTagine = $this->entityManager->getRepository(ProductVariant::class)->findOneBy(['sku' => 'TAG-M']);
+        // Use the in-memory reference: the variants are persisted but not flushed yet,
+        // so a repository lookup would not find them on a fresh database.
+        $mediumTagine = $tagineVariants['TAG-M'];
 
-        if ($mediumTagine !== null) {
-            $override = new CustomerPriceOverride(
-                id: EntityId::generate(),
-                customer: $portalCustomer,
-                variant: $mediumTagine,
-                price: Money::of('279.0000', 'TND'),
-            );
-            $this->entityManager->persist($override);
-        }
+        $override = new CustomerPriceOverride(
+            id: EntityId::generate(),
+            customer: $portalCustomer,
+            variant: $mediumTagine,
+            price: Money::of('279.0000', 'TND'),
+        );
+        $this->entityManager->persist($override);
 
-        if ($wholesaleCustomer !== null && $mediumTagine !== null) {
-            $override = new CustomerPriceOverride(
-                id: EntityId::generate(),
-                customer: $wholesaleCustomer,
-                variant: $mediumTagine,
-                price: Money::of('259.0000', 'TND'),
-            );
-            $this->entityManager->persist($override);
-        }
+        $override = new CustomerPriceOverride(
+            id: EntityId::generate(),
+            customer: $wholesaleCustomer,
+            variant: $mediumTagine,
+            price: Money::of('259.0000', 'TND'),
+        );
+        $this->entityManager->persist($override);
 
         $this->unitOfWork->flush();
 
         $io->success('Catalog and customer seed complete.');
         $io->listing([
-            sprintf('Products seeded including "%s"', $tagine->getName()),
+            sprintf('Products seeded including "%s"', $mediumTagine->getProduct()->getName()),
             'Portal customer linked to customer@tittawin.local',
             'Wholesale demo customer: Atlas Hotel Group',
         ]);
@@ -157,6 +154,8 @@ final class SeedCatalogCommand extends Command
 
     /**
      * @param list<array{sku: string, name: string, price: string, attrs: array<string, string>}> $variants
+     *
+     * @return array<string, ProductVariant> the created variants, keyed by SKU
      */
     private function createProduct(
         EntityId $companyId,
@@ -169,7 +168,7 @@ final class SeedCatalogCommand extends Command
         string $imageUrl,
         array $variants,
         PriceList $priceList,
-    ): Product {
+    ): array {
         $product = new Product(
             id: EntityId::generate(),
             companyId: $companyId,
@@ -191,6 +190,7 @@ final class SeedCatalogCommand extends Command
         );
         $this->entityManager->persist($media);
 
+        $created = [];
         foreach ($variants as $variantData) {
             $variant = new ProductVariant(
                 id: EntityId::generate(),
@@ -206,9 +206,11 @@ final class SeedCatalogCommand extends Command
             $listPrice = Money::of($variantData['price'], 'TND');
             $item = new PriceListItem(EntityId::generate(), $priceList, $variant, $listPrice);
             $this->entityManager->persist($item);
+
+            $created[$variantData['sku']] = $variant;
         }
 
-        return $product;
+        return $created;
     }
 
     private function createPortalCustomer(EntityId $companyId): Customer

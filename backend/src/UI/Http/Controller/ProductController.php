@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace App\UI\Http\Controller;
 
+use App\Application\Catalog\ProductMediaService;
 use App\Application\Catalog\ProductService;
 use App\Domain\Identity\PermissionCatalog;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Security\PermissionVoter;
 use OpenApi\Attributes as OA;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
+use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Serializer\Attribute\SerializedName;
@@ -21,8 +25,10 @@ use Symfony\Component\Validator\Constraints as Assert;
 #[OA\Tag(name: 'Catalog')]
 final class ProductController extends AbstractController
 {
-    public function __construct(private ProductService $productService)
-    {
+    public function __construct(
+        private ProductService $productService,
+        private ProductMediaService $productMediaService,
+    ) {
     }
 
     #[Route('/api/products', name: 'api_products_list', methods: ['GET'])]
@@ -115,6 +121,68 @@ final class ProductController extends AbstractController
         ]);
 
         return $this->json($variant, JsonResponse::HTTP_CREATED);
+    }
+
+    #[Route('/api/products/{id}/media', name: 'api_products_media_upload', methods: ['POST'])]
+    #[OA\Post(path: '/api/products/{id}/media', summary: 'Upload a product picture (multipart field "file", optional "alt_text")', security: [['Bearer' => []]])]
+    public function uploadMedia(string $id, Request $request, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::CATALOG_PRODUCTS_MANAGE);
+
+        $file = $request->files->get('file');
+
+        if (!$file instanceof UploadedFile || !$file->isValid()) {
+            throw new UnprocessableEntityHttpException(
+                $file instanceof UploadedFile && \in_array($file->getError(), [\UPLOAD_ERR_INI_SIZE, \UPLOAD_ERR_FORM_SIZE], true)
+                    ? 'The picture must be 5 MB or smaller.'
+                    : 'Choose a picture to upload.',
+            );
+        }
+
+        $altText = $request->request->get('alt_text');
+        $product = $this->productMediaService->upload(
+            $user,
+            $id,
+            (string) file_get_contents($file->getPathname()),
+            \is_string($altText) ? trim($altText) : null,
+        );
+
+        return $this->json($product, JsonResponse::HTTP_CREATED);
+    }
+
+    #[Route('/api/products/{id}/media/{mediaId}', name: 'api_products_media_delete', methods: ['DELETE'])]
+    #[OA\Delete(path: '/api/products/{id}/media/{mediaId}', summary: 'Remove a product picture', security: [['Bearer' => []]])]
+    public function deleteMedia(string $id, string $mediaId, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::CATALOG_PRODUCTS_MANAGE);
+
+        return $this->json($this->productMediaService->delete($user, $id, $mediaId));
+    }
+
+    #[Route('/api/products/{id}/media/{mediaId}/primary', name: 'api_products_media_primary', methods: ['POST'])]
+    #[OA\Post(path: '/api/products/{id}/media/{mediaId}/primary', summary: 'Make a picture the main product picture', security: [['Bearer' => []]])]
+    public function setPrimaryMedia(string $id, string $mediaId, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::CATALOG_PRODUCTS_MANAGE);
+
+        return $this->json($this->productMediaService->setPrimary($user, $id, $mediaId));
+    }
+
+    /**
+     * Public so <img src> works without a bearer token; media ids are random ULIDs.
+     */
+    #[Route('/api/media/{mediaId}', name: 'api_media_show', methods: ['GET'])]
+    #[OA\Get(path: '/api/media/{mediaId}', summary: 'Serve an uploaded product picture')]
+    public function showMedia(string $mediaId): Response
+    {
+        $file = $this->productMediaService->readFile($mediaId);
+
+        return new Response($file['contents'], Response::HTTP_OK, [
+            'Content-Type' => $file['mime_type'],
+            // A media id always points at the same bytes, so browsers can cache it for good.
+            'Cache-Control' => 'public, max-age=31536000, immutable',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
     }
 }
 

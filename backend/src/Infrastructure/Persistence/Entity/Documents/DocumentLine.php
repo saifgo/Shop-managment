@@ -125,6 +125,11 @@ class DocumentLine
         return $this->taxRate;
     }
 
+    public function getDiscountAmount(): Money
+    {
+        return Money::of($this->discountAmount, $this->document->getCurrency());
+    }
+
     public function getLineSubtotal(): Money
     {
         return Money::of($this->lineSubtotalAmount, $this->document->getCurrency());

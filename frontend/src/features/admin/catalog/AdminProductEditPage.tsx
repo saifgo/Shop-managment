@@ -7,7 +7,7 @@ import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { catalogApi, type ProductDetail } from '@/lib/api/catalog'
 import { customersApi } from '@/lib/api/customers'
+import { ProductPicturesCard } from './ProductPicturesCard'
 import { AlertCircleIcon } from 'lucide-react'
 
 const emptyForm = {
@@ -288,8 +289,19 @@ function ProductEditor({
           </CardFooter>
         </Card>
 
+        {isNew ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Pictures</CardTitle>
+              <CardDescription>Save the product first, then you can add pictures.</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : null}
+
         {!isNew && product ? (
           <div className="flex flex-col gap-6">
+            <ProductPicturesCard product={product} />
+
             <Card>
               <CardHeader>
                 <CardTitle>Variants</CardTitle>

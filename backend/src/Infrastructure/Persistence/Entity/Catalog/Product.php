@@ -58,6 +58,7 @@ class Product implements CompanyScoped
 
     /** @var Collection<int, ProductMedia> */
     #[ORM\OneToMany(mappedBy: 'product', targetEntity: ProductMedia::class, cascade: ['persist'], orphanRemoval: true)]
+    #[ORM\OrderBy(['sortOrder' => 'ASC'])]
     private Collection $media;
 
     public function __construct(
@@ -153,6 +154,11 @@ class Product implements CompanyScoped
         if (!$this->media->contains($media)) {
             $this->media->add($media);
         }
+    }
+
+    public function removeMedia(ProductMedia $media): void
+    {
+        $this->media->removeElement($media);
     }
 
     public function update(

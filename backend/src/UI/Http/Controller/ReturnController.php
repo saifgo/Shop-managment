@@ -56,7 +56,7 @@ final class ReturnController extends AbstractController
                 'notes' => $payload->notes,
                 'items' => $payload->items,
             ],
-            $request->headers->get(IdempotencyKeySubscriber::HEADER),
+            $request->headers->get(IdempotencyKeySubscriber::HEADER_NAME),
         );
 
         return $this->json($result, 201);
@@ -107,7 +107,7 @@ final class ReturnController extends AbstractController
                 'invoice_id' => $payload->invoice_id,
                 'notes' => $payload->notes,
             ],
-            $request->headers->get(IdempotencyKeySubscriber::HEADER),
+            $request->headers->get(IdempotencyKeySubscriber::HEADER_NAME),
         ));
     }
 

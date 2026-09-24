@@ -17,7 +17,10 @@ export const PERMISSIONS = {
   financeView: 'finance.view',
   financeManage: 'finance.manage',
   documentsView: 'documents.view',
+  documentsManage: 'documents.manage',
+  documentsCancel: 'documents.cancel',
   paymentsView: 'payments.view',
+  systemSettingsManage: 'system.settings.manage',
 } as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];

@@ -111,6 +111,16 @@ function authHeaders(idempotencyKey?: string): Record<string, string> {
   return headers
 }
 
+/** Reads the API's `{ error: { message } }` body, falling back to a generic message. */
+export async function errorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: { message?: string } }
+    return body.error?.message ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
 export const ordersApi = {
   validateCart(items: Array<{ variant_id: string; quantity: string }>, customerId?: string) {
     return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/cart/validate`, {
@@ -118,22 +128,28 @@ export const ordersApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ items, customer_id: customerId }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Cart validation failed')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Cart validation failed'))
       return (await response.json()) as CartValidation
     })
   },
 
-  createOrder(items: Array<{ variant_id: string; quantity: string }>, notes?: string) {
+  /** `customerId` is required for admin users and ignored for portal users. */
+  createOrder(
+    items: Array<{ variant_id: string; quantity: string }>,
+    notes?: string,
+    customerId?: string,
+    idempotencyKey: string = crypto.randomUUID(),
+  ) {
     return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...authHeaders(crypto.randomUUID()),
+        ...authHeaders(idempotencyKey),
       },
-      body: JSON.stringify({ items, notes }),
+      body: JSON.stringify({ items, notes, customer_id: customerId }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Order creation failed')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Order creation failed'))
       return (await response.json()) as OrderDetail
     })
   },
@@ -161,7 +177,7 @@ export const ordersApi = {
       method: 'POST',
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Confirm failed')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Confirm failed'))
       return (await response.json()) as OrderDetail
     })
   },

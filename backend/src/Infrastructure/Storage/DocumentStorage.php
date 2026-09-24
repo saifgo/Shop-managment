@@ -51,6 +51,11 @@ final class DocumentStorage
     {
         return $this->backend->exists($key);
     }
+
+    public function delete(string $key): void
+    {
+        $this->backend->delete($key);
+    }
 }
 
 final class LocalFilesystemStorage
@@ -85,6 +90,11 @@ final class LocalFilesystemStorage
     public function exists(string $key): bool
     {
         return $this->filesystem->exists($this->resolvePath($key));
+    }
+
+    public function delete(string $key): void
+    {
+        $this->filesystem->remove($this->resolvePath($key));
     }
 
     private function resolvePath(string $key): string

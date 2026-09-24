@@ -47,6 +47,12 @@ final class MinioDocumentStorage
         return $this->read($key) !== null;
     }
 
+    public function delete(string $key): void
+    {
+        // S3 DELETE is idempotent: a missing object still returns 204.
+        $this->signedRequest('DELETE', $this->objectUrl($key));
+    }
+
     private function ensureBucket(): void
     {
         $url = rtrim($this->endpoint, '/').'/'.$this->bucket;

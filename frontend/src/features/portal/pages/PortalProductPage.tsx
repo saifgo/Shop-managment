@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useCart } from '@/features/portal/context/CartContext'
 import { catalogApi } from '@/lib/api/catalog'
+import { apiUrl } from '@/lib/api/client'
 
 export function PortalProductPage() {
   const { id } = useParams()
@@ -37,7 +38,7 @@ export function PortalProductPage() {
             <div>
               {primaryImage ? (
                 <img
-                  src={primaryImage.url}
+                  src={apiUrl(primaryImage.url)}
                   alt={primaryImage.alt_text ?? product.name}
                   className="w-full rounded-lg"
                 />

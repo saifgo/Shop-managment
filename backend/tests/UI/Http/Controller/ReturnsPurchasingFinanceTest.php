@@ -348,7 +348,7 @@ final class ReturnsPurchasingFinanceTest extends AuthenticatedApiTestCase
 
         foreach ($data['items'] as $item) {
             if ($item['variant_id'] === $variantId) {
-                return $item['quantity_on_hand'];
+                return $item['physical_on_hand'];
             }
         }
 
@@ -369,6 +369,9 @@ final class ReturnsPurchasingFinanceTest extends AuthenticatedApiTestCase
     /** @return array<string, mixed> */
     private function createAndConfirmOrder(string $token, string $variantId, string $quantity, ?string $customerId = null): array
     {
+        // Resolve before creating the order client: the lookup creates its own client,
+        // and response assertions always read the most recently created one.
+        $customerId ??= $this->getPortalCustomerId($token);
         $client = static::createClient();
         $client->request(
             'POST',
@@ -379,7 +382,7 @@ final class ReturnsPurchasingFinanceTest extends AuthenticatedApiTestCase
                 'HTTP_IDEMPOTENCY-KEY' => 'order-' . uniqid('', true),
             ],
             content: json_encode([
-                'customer_id' => $customerId ?? $this->getPortalCustomerId($token),
+                'customer_id' => $customerId,
                 'items' => [['variant_id' => $variantId, 'quantity' => $quantity]],
             ], JSON_THROW_ON_ERROR),
         );

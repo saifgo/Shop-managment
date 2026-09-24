@@ -5,10 +5,12 @@ import {
   ClipboardListIcon,
   CreditCardIcon,
   FactoryIcon,
+  FilesIcon,
   FileTextIcon,
   LayoutDashboardIcon,
   LogOutIcon,
   PackageIcon,
+  SettingsIcon,
   ShoppingCartIcon,
   TagsIcon,
   TrendingUpIcon,
@@ -149,6 +151,12 @@ const NAV_GROUPS: AdminNavGroup[] = [
         permission: PERMISSIONS.salesOrdersView,
       },
       {
+        title: 'Documents',
+        to: '/admin/documents',
+        icon: FilesIcon,
+        permission: PERMISSIONS.documentsView,
+      },
+      {
         title: 'Payments',
         to: '/admin/payments',
         icon: CreditCardIcon,
@@ -187,6 +195,17 @@ const NAV_GROUPS: AdminNavGroup[] = [
         to: '/admin/customers',
         icon: UsersIcon,
         permission: PERMISSIONS.customersView,
+      },
+    ],
+  },
+  {
+    title: 'System',
+    items: [
+      {
+        title: 'Settings',
+        to: '/admin/settings',
+        icon: SettingsIcon,
+        permission: PERMISSIONS.systemSettingsManage,
       },
     ],
   },

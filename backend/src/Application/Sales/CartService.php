@@ -6,6 +6,7 @@ namespace App\Application\Sales;
 
 use App\Application\Catalog\PricingService;
 use App\Application\Inventory\AvailabilityService;
+use App\Application\Settings\TaxSettingsService;
 use App\Domain\Catalog\BackorderPolicy;
 use App\Domain\Shared\EntityId;
 use App\Domain\Shared\Money;
@@ -18,12 +19,11 @@ use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 
 final class CartService
 {
-    private const TAX_RATE = '0.2000';
-
     public function __construct(
         private EntityManagerInterface $entityManager,
         private PricingService $pricingService,
         private AvailabilityService $availabilityService,
+        private TaxSettingsService $taxSettingsService,
     ) {}
 
     /**
@@ -45,6 +45,8 @@ final class CartService
         $subtotal = Money::zero('TND');
         $taxTotal = Money::zero('TND');
         $grandTotal = Money::zero('TND');
+        // Percentage, e.g. "20.0000"; copied onto each order item so later rate changes don't alter this order.
+        $taxRate = $this->taxSettingsService->defaultTaxRate($companyId);
 
         foreach ($items as $index => $item) {
             $variant = $this->findVariant($companyId, $item['variant_id']);
@@ -78,7 +80,7 @@ final class CartService
                 $unitPrice->currency(),
             );
             $lineTax = Money::of(
-                bcmul($lineSubtotal->amount(), self::TAX_RATE, 4),
+                bcmul($lineSubtotal->amount(), bcdiv($taxRate, '100', 6), 4),
                 $unitPrice->currency(),
             );
             $lineTotal = $lineSubtotal->add($lineTax);
@@ -100,7 +102,7 @@ final class CartService
                     'currency' => $unitPrice->currency(),
                     'source' => $pricing['source'],
                 ],
-                'tax_rate' => self::TAX_RATE,
+                'tax_rate' => $taxRate,
                 'discount_amount' => ['amount' => '0.0000', 'currency' => $unitPrice->currency()],
                 'line_subtotal' => ['amount' => $lineSubtotal->amount(), 'currency' => $unitPrice->currency()],
                 'line_tax' => ['amount' => $lineTax->amount(), 'currency' => $unitPrice->currency()],

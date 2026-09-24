@@ -44,10 +44,10 @@ class StageExecution
     private string $lossQuantity = '0.0000';
 
     #[ORM\Column(type: 'text', nullable: true)]
-    private ?string $notes;
+    private ?string $notes = null;
 
     #[ORM\Column(name: 'performed_by', type: 'string', length: 26, nullable: true)]
-    private ?string $performedBy;
+    private ?string $performedBy = null;
 
     #[ORM\Column(name: 'started_at', nullable: true)]
     private ?\DateTimeImmutable $startedAt = null;

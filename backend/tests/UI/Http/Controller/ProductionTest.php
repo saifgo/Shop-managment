@@ -187,6 +187,9 @@ final class ProductionTest extends AuthenticatedApiTestCase
      */
     private function createAndConfirmOrder(string $token, string $variantId, string $quantity): array
     {
+        // Resolve before creating the order client: the lookup creates its own client,
+        // and response assertions always read the most recently created one.
+        $customerId = $this->getPortalCustomerId($token);
         $client = static::createClient();
 
         $client->request(
@@ -198,7 +201,7 @@ final class ProductionTest extends AuthenticatedApiTestCase
                 'HTTP_IDEMPOTENCY-KEY' => 'test-order-'.uniqid('', true),
             ],
             content: json_encode([
-                'customer_id' => $this->getPortalCustomerId($token),
+                'customer_id' => $customerId,
                 'items' => [['variant_id' => $variantId, 'quantity' => $quantity]],
             ], JSON_THROW_ON_ERROR),
         );
@@ -220,7 +223,7 @@ final class ProductionTest extends AuthenticatedApiTestCase
         $client = static::createClient();
         $client->request(
             'GET',
-            '/api/products?search='.urlencode(substr($sku, 0, 3)),
+            '/api/products?per_page=100',
             server: ['HTTP_AUTHORIZATION' => 'Bearer '.$token],
         );
         self::assertResponseIsSuccessful();

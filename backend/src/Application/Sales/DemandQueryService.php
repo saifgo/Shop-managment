@@ -175,7 +175,14 @@ final class DemandQueryService
 
         foreach ($rows as $row) {
             $key = $row['customer_id'].'|'.$row['variant_id'];
-            $existing = $aggregated[$key] ?? $row;
+
+            if (!isset($aggregated[$key])) {
+                $aggregated[$key] = $row;
+
+                continue;
+            }
+
+            $existing = $aggregated[$key];
             $existing['ordered'] = bcadd($existing['ordered'], $row['ordered'], 4);
             $existing['reserved'] = bcadd($existing['reserved'], $row['reserved'], 4);
             $existing['backordered'] = bcadd($existing['backordered'], $row['backordered'], 4);

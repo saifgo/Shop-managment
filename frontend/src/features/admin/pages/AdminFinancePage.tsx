@@ -1,4 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { PlusIcon } from 'lucide-react'
+import { toast } from 'sonner'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
@@ -9,8 +12,11 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { invoicesApi, paymentsApi } from '@/lib/api/finance'
+import { PermissionGate } from '@/features/auth/components/PermissionGate'
+import { invoicesApi, paymentsApi, type InvoiceDocument } from '@/lib/api/finance'
 import { customersApi } from '@/lib/api/customers'
+import { documentsApi } from '@/lib/api/documents'
+import { PERMISSIONS } from '@/lib/auth/permissions'
 
 export function AdminInvoicesPage() {
   const queryClient = useQueryClient()
@@ -23,16 +29,30 @@ export function AdminInvoicesPage() {
     mutationFn: (id: string) => invoicesApi.issue(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin', 'invoices'] }),
   })
+  const download = useMutation({
+    mutationFn: (invoice: InvoiceDocument) => documentsApi.downloadPdf(invoice),
+    onError: (err) => toast.error(err.message),
+  })
 
   return (
     <section className="flex flex-col gap-6">
-      <PageHeader title="Invoices" />
+      <PageHeader
+        title="Invoices"
+        action={
+          <PermissionGate permission={PERMISSIONS.documentsManage}>
+            <Button nativeButton={false} render={<Link to="/admin/documents/new?type=INVOICE" />}>
+              <PlusIcon data-icon="inline-start" />
+              New invoice
+            </Button>
+          </PermissionGate>
+        }
+      />
       <QueryState
         isLoading={isLoading}
         error={error ? 'Failed to load invoices.' : null}
         isEmpty={data?.items.length === 0}
         emptyTitle="No invoices"
-        emptyDescription="Invoices appear after deliveries are billed."
+        emptyDescription="Invoices appear after deliveries are billed, or create one manually."
       >
         <ResponsiveTable
           wide
@@ -43,7 +63,11 @@ export function AdminInvoicesPage() {
               key: 'number',
               header: 'Number',
               primary: true,
-              cell: (invoice) => invoice.document_number ?? 'Draft',
+              cell: (invoice) => (
+                <Link to={`/admin/documents/${invoice.id}`} className="underline-offset-4 hover:underline">
+                  {invoice.document_number ?? 'Draft'}
+                </Link>
+              ),
             },
             {
               key: 'customer',
@@ -77,12 +101,7 @@ export function AdminInvoicesPage() {
                 Issue
               </Button>
             ) : (
-              <Button
-                variant="link"
-                size="sm"
-                nativeButton={false}
-                render={<a href={invoicesApi.downloadUrl(invoice.id)} target="_blank" rel="noreferrer" />}
-              >
+              <Button variant="link" size="sm" disabled={download.isPending} onClick={() => download.mutate(invoice)}>
                 PDF
               </Button>
             )

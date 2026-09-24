@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Application\Documents;
 
+use App\Application\Catalog\PricingService;
 use App\Application\Documents\Message\GenerateDocumentPdf;
+use App\Application\Settings\TaxSettingsService;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Documents\DocumentRelationType;
 use App\Domain\Documents\DocumentStatus;
@@ -13,6 +15,8 @@ use App\Domain\Documents\InvoiceStatus;
 use App\Domain\Shared\EntityId;
 use App\Domain\Shared\Money;
 use App\Domain\Shared\Quantity;
+use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
+use App\Infrastructure\Persistence\Entity\Customer\Customer;
 use App\Infrastructure\Persistence\Entity\Customer\PortalUser;
 use App\Infrastructure\Persistence\Entity\Documents\CommercialDocument;
 use App\Infrastructure\Persistence\Entity\Documents\DocumentFile;
@@ -40,6 +44,8 @@ final class DocumentService
         private DocumentSnapshotBuilder $snapshotBuilder,
         private DocumentStorage $documentStorage,
         private MessageBusInterface $messageBus,
+        private PricingService $pricingService,
+        private TaxSettingsService $taxSettingsService,
     ) {
     }
 
@@ -192,12 +198,7 @@ final class DocumentService
                 return $this->snapshotBuilder->serializeDocument($document);
             }
 
-            $this->assignAndPost(
-                $document,
-                $user,
-                dueDate: $dueDate !== null ? new \DateTimeImmutable($dueDate) : new \DateTimeImmutable('+30 days'),
-            );
-            $this->dispatchPdfGeneration($document);
+            $this->postDraft($document, $user, $dueDate);
 
             return $this->snapshotBuilder->serializeDocument($document);
         });
@@ -292,6 +293,135 @@ final class DocumentService
         });
     }
 
+    /**
+     * Creates a document from hand-entered lines instead of an order or delivery.
+     * Lines either reference a catalog variant (description, SKU and customer price
+     * are filled in when omitted) or are free-text lines with an explicit price.
+     *
+     * @param array{
+     *     document_type: string,
+     *     customer_id: string,
+     *     currency?: string|null,
+     *     order_id?: string|null,
+     *     notes?: string|null,
+     *     due_date?: string|null,
+     *     issue?: bool,
+     *     lines: list<array<string, mixed>>,
+     * } $payload
+     *
+     * @return array<string, mixed>
+     */
+    public function createManualDocument(User $user, array $payload, ?string $idempotencyKey = null): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $payload, $idempotencyKey): array {
+            $existing = $this->findByIdempotency($user, $idempotencyKey);
+
+            if ($existing !== null) {
+                return $this->snapshotBuilder->serializeDocument($existing);
+            }
+
+            $type = DocumentType::tryFrom($payload['document_type']);
+
+            if ($type === null || !in_array($type, DocumentType::manuallyCreatable(), true)) {
+                throw new BadRequestHttpException(sprintf('Document type "%s" cannot be created manually.', $payload['document_type']));
+            }
+
+            $customer = $this->findCustomer($user, $payload['customer_id']);
+            $currency = strtoupper($payload['currency'] ?? 'TND');
+
+            if (strlen($currency) !== 3) {
+                throw new BadRequestHttpException('currency must be a 3-letter code.');
+            }
+
+            $order = null;
+
+            if (isset($payload['order_id'])) {
+                $order = $this->findOrder($user, $payload['order_id']);
+
+                if ($order->getCustomer()->getId() !== $customer->getId()) {
+                    throw new BadRequestHttpException('The linked order belongs to a different customer.');
+                }
+            }
+
+            if ($payload['lines'] === []) {
+                throw new BadRequestHttpException('At least one line is required.');
+            }
+
+            $linePayloads = [];
+
+            foreach ($payload['lines'] as $index => $line) {
+                $linePayloads[] = $this->buildManualLine($user, $customer, $currency, $line, $index);
+            }
+
+            $snapshot = $this->snapshotBuilder->customerSnapshot($customer);
+            $totals = DocumentSnapshotBuilder::totalsFromLines($linePayloads, $currency);
+
+            $document = new CommercialDocument(
+                id: EntityId::generate(),
+                companyId: $user->companyId(),
+                documentType: $type,
+                status: $type === DocumentType::Invoice ? InvoiceStatus::Draft->value : DocumentStatus::Draft->value,
+                customer: $customer,
+                customerDisplayName: $snapshot['display_name'],
+                customerLegalName: $snapshot['legal_name'],
+                customerTaxId: $snapshot['tax_id'],
+                customerVatNumber: $snapshot['vat_number'],
+                billingAddress: $snapshot['billing_address'],
+                shippingAddress: $snapshot['shipping_address'],
+                currency: $currency,
+                subtotal: $totals['subtotal'],
+                taxTotal: $totals['tax_total'],
+                discountTotal: $totals['discount_total'],
+                grandTotal: $totals['grand_total'],
+                order: $order,
+                notes: $payload['notes'] ?? null,
+                idempotencyKey: $idempotencyKey,
+                createdBy: EntityId::fromString($user->getId()),
+            );
+
+            $this->persistDocumentLines($document, $linePayloads);
+            $this->entityManager->persist($document);
+
+            if ($payload['issue'] ?? false) {
+                $this->postDraft($document, $user, $payload['due_date'] ?? null);
+            }
+
+            return $this->snapshotBuilder->serializeDocument($document);
+        });
+    }
+
+    /** @return array<string, mixed> */
+    public function issueDocument(User $user, string $documentId, ?string $dueDate = null): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $documentId, $dueDate): array {
+            $document = $this->findDocument($user, $documentId);
+
+            if (!$document->isPosted()) {
+                $this->postDraft($document, $user, $dueDate);
+            }
+
+            return $this->snapshotBuilder->serializeDocument($document);
+        });
+    }
+
+    /** @return array<string, mixed> */
+    public function cancelDocument(User $user, string $documentId): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $documentId): array {
+            $document = $this->findDocument($user, $documentId);
+
+            if ($document->isPosted()) {
+                throw new BadRequestHttpException($document->getDocumentType() === DocumentType::Invoice
+                    ? 'Posted invoices cannot be cancelled; issue a credit note.'
+                    : 'Posted documents cannot be cancelled.');
+            }
+
+            $document->cancel();
+
+            return $this->snapshotBuilder->serializeDocument($document);
+        });
+    }
+
     /** @return array<string, mixed> */
     public function get(User $user, string $documentId): array
     {
@@ -303,14 +433,34 @@ final class DocumentService
      */
     public function listInvoices(User $user, int $page, int $perPage, ?string $customerId = null): PaginatedResult
     {
+        return $this->listDocuments($user, $page, $perPage, DocumentType::Invoice, $customerId);
+    }
+
+    /**
+     * @return PaginatedResult<array<string, mixed>>
+     */
+    public function listDocuments(
+        User $user,
+        int $page,
+        int $perPage,
+        ?DocumentType $type = null,
+        ?string $customerId = null,
+        ?string $status = null,
+    ): PaginatedResult {
         $qb = $this->entityManager->createQueryBuilder()
             ->select('d')
             ->from(CommercialDocument::class, 'd')
             ->where('d.companyId = :companyId')
-            ->andWhere('d.documentType = :type')
             ->setParameter('companyId', $user->companyId()->toString())
-            ->setParameter('type', DocumentType::Invoice)
             ->orderBy('d.createdAt', 'DESC');
+
+        if ($type !== null) {
+            $qb->andWhere('d.documentType = :type')->setParameter('type', $type);
+        }
+
+        if ($status !== null) {
+            $qb->andWhere('d.status = :status')->setParameter('status', $status);
+        }
 
         if ($customerId !== null) {
             $qb->andWhere('d.customer = :customer')->setParameter('customer', $customerId);
@@ -445,7 +595,12 @@ final class DocumentService
         return $lines;
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Order items store their tax rate as a percentage (see CartService), the same
+     * convention lineTotals() and document lines use, so it is copied through unchanged.
+     *
+     * @return array<string, mixed>
+     */
     private function lineFromOrderItem(OrderItem $item, Quantity $quantity, int $sortOrder): array
     {
         $unitPrice = $item->getUnitPrice();
@@ -457,7 +612,8 @@ final class DocumentService
             bcmul($discountPerUnit->amount(), $quantity->amount(), 4),
             $unitPrice->currency(),
         );
-        $totals = DocumentSnapshotBuilder::lineTotals($quantity, $unitPrice, $item->getTaxRate(), $discountAmount);
+        $taxRate = bcadd($item->getTaxRate(), '0', 4);
+        $totals = DocumentSnapshotBuilder::lineTotals($quantity, $unitPrice, $taxRate, $discountAmount);
 
         return [
             'source_line_id' => $item->getId(),
@@ -465,13 +621,159 @@ final class DocumentService
             'sku' => $item->getSku(),
             'quantity' => $quantity,
             'unit_price' => $unitPrice,
-            'tax_rate' => $item->getTaxRate(),
+            'tax_rate' => $taxRate,
             'discount_amount' => $discountAmount,
             'line_subtotal' => $totals['line_subtotal'],
             'line_tax' => $totals['line_tax'],
             'line_total' => $totals['line_total'],
             'sort_order' => $sortOrder,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $line
+     *
+     * @return array<string, mixed>
+     */
+    private function buildManualLine(User $user, Customer $customer, string $currency, array $line, int $index): array
+    {
+        $position = $index + 1;
+        $variantId = $this->optionalString($line, 'variant_id', $position);
+        $description = $this->optionalString($line, 'description', $position);
+        $sku = $this->optionalString($line, 'sku', $position);
+        $unitPriceInput = $this->optionalString($line, 'unit_price', $position);
+
+        if ($variantId !== null) {
+            $variant = $this->findVariant($user, $variantId, $position);
+            $description ??= $variant->getProduct()->getName().' — '.$variant->getName();
+            $sku ??= $variant->getSku();
+
+            if ($unitPriceInput === null) {
+                $pricing = $this->pricingService->resolveForVariant(
+                    $variant,
+                    $user->companyId(),
+                    EntityId::fromString($customer->getId()),
+                );
+
+                if (strtoupper($pricing['currency']) !== $currency) {
+                    throw new BadRequestHttpException(sprintf(
+                        'Line %d: catalog price is in %s; enter a unit price in %s.',
+                        $position,
+                        $pricing['currency'],
+                        $currency,
+                    ));
+                }
+
+                $unitPriceInput = $pricing['amount'];
+            }
+        }
+
+        if ($description === null) {
+            throw new BadRequestHttpException(sprintf('Line %d: description is required when no product is selected.', $position));
+        }
+
+        if ($unitPriceInput === null) {
+            throw new BadRequestHttpException(sprintf('Line %d: unit_price is required when no product is selected.', $position));
+        }
+
+        $quantity = Quantity::of($this->decimal($line['quantity'] ?? null, $position, 'quantity'));
+
+        if ($quantity->isZero()) {
+            throw new BadRequestHttpException(sprintf('Line %d: quantity must be greater than zero.', $position));
+        }
+
+        $unitPrice = Money::of($this->decimal($unitPriceInput, $position, 'unit_price'), $currency);
+        $taxRate = $this->decimal(
+            $line['tax_rate'] ?? $this->taxSettingsService->defaultTaxRate($user->companyId()),
+            $position,
+            'tax_rate',
+        );
+
+        if (bccomp($taxRate, '100', 4) > 0) {
+            throw new BadRequestHttpException(sprintf('Line %d: tax_rate is a percentage and cannot exceed 100.', $position));
+        }
+
+        $discount = Money::of($this->decimal($line['discount_amount'] ?? '0', $position, 'discount_amount'), $currency);
+
+        if (bccomp($discount->amount(), bcmul($quantity->amount(), $unitPrice->amount(), 4), 4) > 0) {
+            throw new BadRequestHttpException(sprintf('Line %d: discount cannot exceed the line amount.', $position));
+        }
+
+        $totals = DocumentSnapshotBuilder::lineTotals($quantity, $unitPrice, $taxRate, $discount);
+
+        return [
+            'source_line_id' => null,
+            'description' => mb_substr($description, 0, 255),
+            'sku' => mb_substr($sku ?? '', 0, 64),
+            'quantity' => $quantity,
+            'unit_price' => $unitPrice,
+            'tax_rate' => $taxRate,
+            'discount_amount' => $totals['discount_amount'],
+            'line_subtotal' => $totals['line_subtotal'],
+            'line_tax' => $totals['line_tax'],
+            'line_total' => $totals['line_total'],
+            'sort_order' => $index,
+        ];
+    }
+
+    /** @param array<string, mixed> $line */
+    private function optionalString(array $line, string $field, int $position): ?string
+    {
+        $value = $line[$field] ?? null;
+
+        if ($value === null) {
+            return null;
+        }
+
+        if (is_int($value) || is_float($value)) {
+            $value = (string) $value;
+        }
+
+        if (!is_string($value)) {
+            throw new BadRequestHttpException(sprintf('Line %d: %s must be a string.', $position, $field));
+        }
+
+        $value = trim($value);
+
+        return $value === '' ? null : $value;
+    }
+
+    /** Validates a non-negative decimal with at most 4 fractional digits and returns it at scale 4. */
+    private function decimal(mixed $value, int $position, string $field): string
+    {
+        if (is_int($value) || is_float($value)) {
+            $value = (string) $value;
+        }
+
+        if (!is_string($value) || !preg_match('/^\d+(\.\d{1,4})?$/', trim($value))) {
+            throw new BadRequestHttpException(sprintf(
+                'Line %d: %s must be a non-negative number with at most 4 decimal places.',
+                $position,
+                $field,
+            ));
+        }
+
+        return bcadd(trim($value), '0', 4);
+    }
+
+    private function postDraft(CommercialDocument $document, User $user, ?string $dueDate): void
+    {
+        if ($document->getStatus() === DocumentStatus::Cancelled->value) {
+            throw new BadRequestHttpException('Cancelled documents cannot be issued.');
+        }
+
+        $due = null;
+
+        if ($document->getDocumentType() === DocumentType::Invoice) {
+            try {
+                $due = $dueDate !== null ? new \DateTimeImmutable($dueDate) : new \DateTimeImmutable('+30 days');
+            } catch (\Exception) {
+                throw new BadRequestHttpException('due_date must be a valid date (YYYY-MM-DD).');
+            }
+        }
+
+        $this->assignAndPost($document, $user, dueDate: $due);
+        $this->dispatchPdfGeneration($document);
     }
 
     /** @param list<array<string, mixed>> $linePayloads */
@@ -578,6 +880,36 @@ final class DocumentService
         return $order;
     }
 
+    private function findCustomer(User $user, string $customerId): Customer
+    {
+        /** @var Customer|null $customer */
+        $customer = $this->entityManager->getRepository(Customer::class)->findOneBy([
+            'id' => $customerId,
+            'companyId' => $user->companyId()->toString(),
+        ]);
+
+        if ($customer === null) {
+            throw new BadRequestHttpException('Customer not found.');
+        }
+
+        return $customer;
+    }
+
+    private function findVariant(User $user, string $variantId, int $position): ProductVariant
+    {
+        /** @var ProductVariant|null $variant */
+        $variant = $this->entityManager->getRepository(ProductVariant::class)->findOneBy([
+            'id' => $variantId,
+            'companyId' => $user->companyId()->toString(),
+        ]);
+
+        if ($variant === null) {
+            throw new BadRequestHttpException(sprintf('Line %d: product variant not found.', $position));
+        }
+
+        return $variant;
+    }
+
     private function findDelivery(User $user, string $deliveryId): Delivery
     {
         /** @var Delivery|null $delivery */
@@ -627,7 +959,7 @@ final class DocumentService
         return $document;
     }
 
-    private function resolvePortalCustomer(User $user): \App\Infrastructure\Persistence\Entity\Customer\Customer
+    private function resolvePortalCustomer(User $user): Customer
     {
         /** @var PortalUser|null $portalUser */
         $portalUser = $this->entityManager->getRepository(PortalUser::class)->findOneBy(['user' => $user]);

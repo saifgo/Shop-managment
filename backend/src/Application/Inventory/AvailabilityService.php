@@ -79,7 +79,8 @@ final class AvailabilityService
             ->setParameter('variant', $variant)
             ->setParameter('statuses', [DemandStatus::Open->value, DemandStatus::PartiallyFulfilled->value]);
 
-        return (string) $qb->getQuery()->getSingleScalarResult();
+        // Normalise to scale 4: the raw SUM() format depends on the database driver.
+        return bcadd((string) $qb->getQuery()->getSingleScalarResult(), '0', 4);
     }
 
     private function sumInProduction(EntityId $companyId, ProductVariant $variant): string
@@ -99,7 +100,8 @@ final class AvailabilityService
                 ProductionStatus::Paused->value,
             ]);
 
-        return (string) $qb->getQuery()->getSingleScalarResult();
+        // Normalise to scale 4: the raw SUM() format depends on the database driver.
+        return bcadd((string) $qb->getQuery()->getSingleScalarResult(), '0', 4);
     }
 
     public function resolveDefaultLocation(EntityId $companyId): ?StockLocation

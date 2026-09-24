@@ -107,7 +107,7 @@ final class PurchasingController extends AbstractController
             'expected_at' => $payload->expected_at,
             'notes' => $payload->notes,
             'items' => $payload->items,
-        ], $request->headers->get(IdempotencyKeySubscriber::HEADER)), 201);
+        ], $request->headers->get(IdempotencyKeySubscriber::HEADER_NAME)), 201);
     }
 
     #[Route('/api/purchase-orders/{id}', name: 'api_purchase_orders_get', methods: ['GET'])]
@@ -128,7 +128,7 @@ final class PurchasingController extends AbstractController
             $id,
             $payload->lines,
             $payload->notes,
-            $request->headers->get(IdempotencyKeySubscriber::HEADER),
+            $request->headers->get(IdempotencyKeySubscriber::HEADER_NAME),
         ), 201);
     }
 
@@ -161,7 +161,7 @@ final class PurchasingController extends AbstractController
             'method' => $payload->method,
             'payment_date' => $payload->payment_date,
             'notes' => $payload->notes,
-        ], $request->headers->get(IdempotencyKeySubscriber::HEADER)), 201);
+        ], $request->headers->get(IdempotencyKeySubscriber::HEADER_NAME)), 201);
     }
 
     #[Route('/api/supplier-payments/{id}/allocate', name: 'api_supplier_payments_allocate', methods: ['POST'])]

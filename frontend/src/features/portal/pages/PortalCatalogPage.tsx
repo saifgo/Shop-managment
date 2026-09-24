@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { catalogApi, type CategoryNode } from '@/lib/api/catalog'
+import { apiUrl } from '@/lib/api/client'
 
 export function PortalCatalogPage() {
   const [categoryId, setCategoryId] = useState('')
@@ -68,7 +69,7 @@ export function PortalCatalogPage() {
             <Link key={product.id} to={`/portal/catalog/${product.id}`}>
               <Card>
                 {product.primary_image_url ? (
-                  <img src={product.primary_image_url} alt={product.name} loading="lazy" />
+                  <img src={apiUrl(product.primary_image_url)} alt={product.name} loading="lazy" />
                 ) : (
                   <div className="aspect-[4/3] bg-muted" />
                 )}

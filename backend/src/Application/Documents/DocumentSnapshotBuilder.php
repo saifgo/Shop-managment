@@ -62,7 +62,12 @@ final class DocumentSnapshotBuilder
             $grandTotal = $grandTotal->add($line['line_total']);
         }
 
-        return compact('subtotal', 'tax_total', 'discount_total', 'grand_total');
+        return [
+            'subtotal' => $subtotal,
+            'tax_total' => $taxTotal,
+            'discount_total' => $discountTotal,
+            'grand_total' => $grandTotal,
+        ];
     }
 
     /**
@@ -107,6 +112,7 @@ final class DocumentSnapshotBuilder
                 'quantity' => $line->getQuantity()->amount(),
                 'unit_price' => ['amount' => $line->getUnitPrice()->amount(), 'currency' => $document->getCurrency()],
                 'tax_rate' => $line->getTaxRate(),
+                'discount_amount' => ['amount' => $line->getDiscountAmount()->amount(), 'currency' => $document->getCurrency()],
                 'line_subtotal' => ['amount' => $line->getLineSubtotal()->amount(), 'currency' => $document->getCurrency()],
                 'line_tax' => ['amount' => $line->getLineTax()->amount(), 'currency' => $document->getCurrency()],
                 'line_total' => ['amount' => $line->getLineTotal()->amount(), 'currency' => $document->getCurrency()],

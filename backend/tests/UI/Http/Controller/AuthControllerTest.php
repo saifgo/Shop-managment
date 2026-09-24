@@ -4,29 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\UI\Http\Controller;
 
-use App\Infrastructure\Console\SeedIdentityCommand;
-use Doctrine\ORM\Tools\SchemaTool;
-use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
+use App\Tests\Support\AuthenticatedApiTestCase;
 
-final class AuthControllerTest extends WebTestCase
+final class AuthControllerTest extends AuthenticatedApiTestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        static::createClient();
-        $entityManager = static::getContainer()->get('doctrine')->getManager();
-        $metadata = $entityManager->getMetadataFactory()->getAllMetadata();
-        $schemaTool = new SchemaTool($entityManager);
-        $schemaTool->dropSchema($metadata);
-        $schemaTool->createSchema($metadata);
-
-        static::getContainer()->get(SeedIdentityCommand::class)->run(
-            new \Symfony\Component\Console\Input\ArrayInput([]),
-            new \Symfony\Component\Console\Output\NullOutput(),
-        );
-    }
-
     public function testLoginReturnsTokensForValidCredentials(): void
     {
         $client = static::createClient();

@@ -19,12 +19,14 @@ const SEGMENT_LABELS: Record<string, string> = {
   inventory: 'Inventory',
   production: 'Production',
   invoices: 'Invoices',
+  documents: 'Documents',
   payments: 'Payments',
   finance: 'Finance',
   suppliers: 'Suppliers',
   purchasing: 'Purchasing',
   customers: 'Customers',
   reports: 'Reports',
+  settings: 'Settings',
   new: 'New',
 }
 

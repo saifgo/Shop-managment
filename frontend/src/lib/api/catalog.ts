@@ -107,6 +107,22 @@ export const catalogApi = {
     return apiClient.post<ProductVariant>(`/api/products/${productId}/variants`, body, token());
   },
 
+  uploadProductMedia(productId: string, file: File, altText?: string): Promise<ProductDetail> {
+    const body = new FormData();
+    body.append('file', file);
+    if (altText) body.append('alt_text', altText);
+
+    return apiClient.post<ProductDetail>(`/api/products/${productId}/media`, body, token());
+  },
+
+  deleteProductMedia(productId: string, mediaId: string): Promise<ProductDetail> {
+    return apiClient.delete<ProductDetail>(`/api/products/${productId}/media/${mediaId}`, token());
+  },
+
+  setPrimaryProductMedia(productId: string, mediaId: string): Promise<ProductDetail> {
+    return apiClient.post<ProductDetail>(`/api/products/${productId}/media/${mediaId}/primary`, undefined, token());
+  },
+
   listCategories(): Promise<{ items: CategoryNode[] }> {
     return apiClient.get<{ items: CategoryNode[] }>('/api/categories', token());
   },

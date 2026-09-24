@@ -4,7 +4,13 @@ import { AdminCategoriesPage } from '@/features/admin/catalog/AdminCategoriesPag
 import { AdminProductEditPage } from '@/features/admin/catalog/AdminProductEditPage'
 import { AdminCustomerEditPage } from '@/features/admin/customers/AdminCustomerEditPage'
 import { AdminCustomersPage } from '@/features/admin/customers/AdminCustomersPage'
+import { AdminDocumentCreatePage } from '@/features/admin/documents/AdminDocumentCreatePage'
+import { AdminDocumentDetailPage } from '@/features/admin/documents/AdminDocumentDetailPage'
+import { AdminDocumentsPage } from '@/features/admin/documents/AdminDocumentsPage'
 import { AdminLayout } from '@/features/admin/layouts/AdminLayout'
+import { AdminOrderCreatePage } from '@/features/admin/orders/AdminOrderCreatePage'
+import { AdminPurchaseOrderCreatePage } from '@/features/admin/purchasing/AdminPurchaseOrderCreatePage'
+import { AdminPurchaseOrderDetailPage } from '@/features/admin/purchasing/AdminPurchaseOrderDetailPage'
 import { AdminHomePage } from '@/features/admin/pages/AdminHomePage'
 import { AdminDemandPage } from '@/features/admin/pages/AdminDemandPage'
 import { AdminInventoryPage } from '@/features/admin/pages/AdminInventoryPage'
@@ -27,6 +33,7 @@ import { AdminLightweightFinancePage } from '@/features/admin/pages/AdminLightwe
 import { AdminPurchasingPage, AdminSuppliersPage } from '@/features/admin/pages/AdminPurchasingPage'
 import { AdminReturnsPage } from '@/features/admin/pages/AdminReturnsPage'
 import { AdminReportsPage } from '@/features/admin/pages/AdminReportsPage'
+import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { PortalInvoicesPage } from '@/features/finance/FinancePanels'
 import { PortalReturnsPage } from '@/features/portal/pages/PortalReturnsPage'
 import { PERMISSIONS } from '@/lib/auth/permissions'
@@ -144,12 +151,60 @@ export function AppRouter() {
           }
         />
         <Route path="orders" element={<AdminOrdersPage />} />
+        <Route
+          path="orders/new"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.salesOrdersManage]}>
+              <AdminOrderCreatePage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="orders/:id" element={<AdminOrderDetailPage />} />
         <Route path="invoices" element={<AdminInvoicesPage />} />
+        <Route
+          path="documents"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.documentsView]}>
+              <AdminDocumentsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="documents/new"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.documentsManage]}>
+              <AdminDocumentCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="documents/:id"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.documentsView]}>
+              <AdminDocumentDetailPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="payments" element={<AdminPaymentsPage />} />
         <Route path="returns" element={<AdminReturnsPage />} />
         <Route path="suppliers" element={<AdminSuppliersPage />} />
         <Route path="purchasing" element={<AdminPurchasingPage />} />
+        <Route
+          path="purchasing/new"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.purchasingManage]}>
+              <AdminPurchaseOrderCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="purchasing/:id"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.purchasingView]}>
+              <AdminPurchaseOrderDetailPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="finance" element={<AdminLightweightFinancePage />} />
         <Route path="reports" element={<AdminReportsPage />} />
         <Route path="inventory" element={<AdminInventoryPage />} />
@@ -191,6 +246,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.customersView]}>
               <AdminCustomerEditPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.systemSettingsManage]}>
+              <AdminSettingsPage />
             </ProtectedRoute>
           }
         />

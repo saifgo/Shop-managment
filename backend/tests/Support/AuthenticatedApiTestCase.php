@@ -8,6 +8,7 @@ use App\Infrastructure\Console\SeedCatalogCommand;
 use App\Infrastructure\Console\SeedIdentityCommand;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\SchemaTool;
+use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 
 abstract class AuthenticatedApiTestCase extends WebTestCase
@@ -22,6 +23,10 @@ abstract class AuthenticatedApiTestCase extends WebTestCase
         $schemaTool = new SchemaTool($entityManager);
         $schemaTool->dropSchema($metadata);
         $schemaTool->createSchema($metadata);
+
+        // The login rate limiter counts attempts in the filesystem app cache, which
+        // otherwise accumulates across tests and starts returning 429.
+        static::getContainer()->get('cache.app')->clear();
 
         static::getContainer()->get(SeedIdentityCommand::class)->run(
             new \Symfony\Component\Console\Input\ArrayInput([]),
@@ -42,6 +47,18 @@ abstract class AuthenticatedApiTestCase extends WebTestCase
             new \Symfony\Component\Console\Input\ArrayInput([]),
             new \Symfony\Component\Console\Output\NullOutput(),
         );
+    }
+
+    /**
+     * Tests create a fresh client per request; Symfony refuses to boot a second
+     * kernel, so shut the previous one down first. The SQLite test database is
+     * file-backed, so state survives the reboot.
+     */
+    protected static function createClient(array $options = [], array $server = []): KernelBrowser
+    {
+        static::ensureKernelShutdown();
+
+        return parent::createClient($options, $server);
     }
 
     /**

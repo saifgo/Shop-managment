@@ -25,6 +25,9 @@ const STATUS_VARIANT_MAP: Record<string, BadgeVariant> = {
   PARTIALLY_PAID: 'default',
   PARTIALLY_DELIVERED: 'default',
   APPROVED: 'default',
+  SENT: 'default',
+  PARTIALLY_RECEIVED: 'default',
+  POSTED: 'outline',
 
   // Settled / complete
   COMPLETED: 'outline',

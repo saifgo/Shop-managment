@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { buttonVariants } from '@/components/ui/button'
 import { PermissionGate } from '@/features/auth/components/PermissionGate'
 import { catalogApi, type ProductSummary } from '@/lib/api/catalog'
+import { apiUrl } from '@/lib/api/client'
 import { PERMISSIONS } from '@/lib/auth/permissions'
 
 const columns: ResponsiveTableColumn<ProductSummary>[] = [
@@ -17,9 +18,21 @@ const columns: ResponsiveTableColumn<ProductSummary>[] = [
     header: 'Name',
     primary: true,
     cell: (product) => (
-      <Link to={`/admin/catalog/${product.id}`} className="underline-offset-4 hover:underline">
-        {product.name}
-      </Link>
+      <div className="flex items-center gap-3">
+        {product.primary_image_url ? (
+          <img
+            src={apiUrl(product.primary_image_url)}
+            alt=""
+            className="size-10 shrink-0 rounded-md border object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="size-10 shrink-0 rounded-md border bg-muted" />
+        )}
+        <Link to={`/admin/catalog/${product.id}`} className="underline-offset-4 hover:underline">
+          {product.name}
+        </Link>
+      </div>
     ),
   },
   {

@@ -1,11 +1,15 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { PlusIcon } from 'lucide-react'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable, type ResponsiveTableColumn } from '@/components/ResponsiveTable'
 import { StatusBadge } from '@/components/StatusBadge'
+import { Button } from '@/components/ui/button'
+import { PermissionGate } from '@/features/auth/components/PermissionGate'
 import { ordersApi, type OrderSummary } from '@/lib/api/orders'
+import { PERMISSIONS } from '@/lib/auth/permissions'
 
 const columns: ResponsiveTableColumn<OrderSummary>[] = [
   {
@@ -56,6 +60,14 @@ export function AdminOrdersPage() {
       <PageHeader
         title="Orders"
         description="Confirm, reserve, and manage customer demand."
+        action={
+          <PermissionGate permission={PERMISSIONS.salesOrdersManage}>
+            <Button nativeButton={false} render={<Link to="/admin/orders/new" />}>
+              <PlusIcon data-icon="inline-start" />
+              New order
+            </Button>
+          </PermissionGate>
+        }
       />
 
       <QueryState

@@ -31,6 +31,13 @@ class ProductMedia
     #[ORM\Column(name: 'is_primary', options: ['default' => false])]
     private bool $isPrimary = false;
 
+    /** Set for uploaded files; null for media that points at an external URL. */
+    #[ORM\Column(name: 'storage_key', length: 255, nullable: true)]
+    private ?string $storageKey;
+
+    #[ORM\Column(name: 'mime_type', length: 100, nullable: true)]
+    private ?string $mimeType;
+
     #[ORM\Column(name: 'created_at')]
     private \DateTimeImmutable $createdAt;
 
@@ -41,6 +48,8 @@ class ProductMedia
         ?string $altText = null,
         int $sortOrder = 0,
         bool $isPrimary = false,
+        ?string $storageKey = null,
+        ?string $mimeType = null,
     ) {
         $this->id = $id->toString();
         $this->product = $product;
@@ -48,6 +57,8 @@ class ProductMedia
         $this->altText = $altText;
         $this->sortOrder = $sortOrder;
         $this->isPrimary = $isPrimary;
+        $this->storageKey = $storageKey;
+        $this->mimeType = $mimeType;
         $this->createdAt = new \DateTimeImmutable();
         $product->addMedia($this);
     }
@@ -80,5 +91,20 @@ class ProductMedia
     public function isPrimary(): bool
     {
         return $this->isPrimary;
+    }
+
+    public function setPrimary(bool $isPrimary): void
+    {
+        $this->isPrimary = $isPrimary;
+    }
+
+    public function getStorageKey(): ?string
+    {
+        return $this->storageKey;
+    }
+
+    public function getMimeType(): ?string
+    {
+        return $this->mimeType;
     }
 }
