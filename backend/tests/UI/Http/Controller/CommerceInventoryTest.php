@@ -155,6 +155,8 @@ final class CommerceInventoryTest extends AuthenticatedApiTestCase
         $after = $this->getStockForVariant($admin['access_token'], $variantId);
         self::assertSame(bcadd($before['physical_on_hand'], '2', 4), $after['physical_on_hand']);
 
+        // The stock lookup created its own client; assertions read the most recently created one.
+        $client = static::createClient();
         $client->request(
             'POST',
             '/api/inventory/adjustments',

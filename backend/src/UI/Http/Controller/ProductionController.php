@@ -17,7 +17,6 @@ use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Serializer\Attribute\SerializedName;
-use Symfony\Component\Validator\Constraints as Assert;
 
 #[OA\Tag(name: 'Production')]
 final class ProductionController extends AbstractController
@@ -58,6 +57,7 @@ final class ProductionController extends AbstractController
         $result = $this->productionService->create(
             user: $user,
             payload: [
+                'items' => $payload->items,
                 'variant_id' => $payload->variantId,
                 'planned_quantity' => $payload->plannedQuantity,
                 'priority' => $payload->priority,
@@ -118,6 +118,7 @@ final class ProductionController extends AbstractController
 
         return $this->json($this->productionService->startStage($user, $id, $stageId, [
             'input_quantity' => $payload->inputQuantity,
+            'items' => $payload->items,
         ]));
     }
 
@@ -131,8 +132,9 @@ final class ProductionController extends AbstractController
         $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_STAGE_EXECUTE);
 
         return $this->json($this->productionService->completeStage($user, $id, $stageId, [
+            'items' => $payload->items,
             'accepted_output_quantity' => $payload->acceptedOutputQuantity,
-            'loss_quantity' => $payload->lossQuantity ?? '0.0000',
+            'loss_quantity' => $payload->lossQuantity,
             'notes' => $payload->notes,
             'losses' => $payload->losses,
         ]));
@@ -160,13 +162,17 @@ final class ProductionController extends AbstractController
 
 final readonly class CreateProductionRequest
 {
+    /**
+     * Either `items` (one entry per product) or the legacy single-product `variant_id` + `planned_quantity`.
+     *
+     * @param list<array{variant_id?: string|null, planned_quantity?: string|null}>|null $items
+     */
     public function __construct(
-        #[Assert\NotBlank]
+        public ?array $items = null,
         #[SerializedName('variant_id')]
-        public string $variantId,
-        #[Assert\NotBlank]
+        public ?string $variantId = null,
         #[SerializedName('planned_quantity')]
-        public string $plannedQuantity,
+        public ?string $plannedQuantity = null,
         public ?string $priority = 'NORMAL',
         #[SerializedName('planned_start')]
         public ?string $plannedStart = null,
@@ -191,9 +197,13 @@ final readonly class CancelProductionRequest
 
 final readonly class StartStageRequest
 {
+    /**
+     * @param list<array{item_id?: string|null, input_quantity?: string|null}>|null $items per-product input overrides
+     */
     public function __construct(
         #[SerializedName('input_quantity')]
         public ?string $inputQuantity = null,
+        public ?array $items = null,
     ) {
     }
 }
@@ -201,14 +211,17 @@ final readonly class StartStageRequest
 final readonly class CompleteStageRequest
 {
     /**
+     * Either `items` (results per product) or the legacy single-product fields.
+     *
+     * @param list<array{item_id?: string|null, accepted_output_quantity?: string|null, loss_quantity?: string|null, losses?: list<array<string, mixed>>|null}>|null $items
      * @param list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>|null $losses
      */
     public function __construct(
-        #[Assert\NotBlank]
+        public ?array $items = null,
         #[SerializedName('accepted_output_quantity')]
-        public string $acceptedOutputQuantity,
+        public ?string $acceptedOutputQuantity = null,
         #[SerializedName('loss_quantity')]
-        public ?string $lossQuantity = '0.0000',
+        public ?string $lossQuantity = null,
         public ?string $notes = null,
         public ?array $losses = null,
     ) {

@@ -1,19 +1,46 @@
 import { apiClient } from '@/lib/api/client'
 import { getAccessToken } from '@/lib/auth/storage'
 
+export interface ProductionProduct {
+  item_id: string
+  variant_id: string
+  sku: string
+  product_name: string
+  variant_name: string
+  planned_quantity: string
+}
+
 export interface ProductionSummary {
   id: string
   reference: string
   status: string
   priority: string
+  /** First product only — use `products` for multi-product orders. */
   variant_id: string | null
+  /** First product only — use `products` for multi-product orders. */
   sku: string | null
+  item_count: number
+  products: ProductionProduct[]
+  /** Total planned quantity across all products. */
   planned_quantity: string | null
   current_stage_id?: string | null
   current_stage_name?: string | null
   current_stage_status?: string | null
   planned_due?: string | null
   created_at: string
+}
+
+/** Quantities for one product at one stage. */
+export interface ProductionStageLine {
+  id: string
+  item_id: string
+  variant_id: string
+  sku: string
+  product_name: string
+  variant_name: string
+  input_quantity: string
+  accepted_output_quantity: string
+  loss_quantity: string
 }
 
 export interface ProductionStage {
@@ -31,6 +58,7 @@ export interface ProductionStage {
   started_at?: string | null
   completed_at?: string | null
   notes?: string | null
+  lines: ProductionStageLine[]
 }
 
 export interface ProductionDetail extends ProductionSummary {
@@ -49,6 +77,7 @@ export interface ProductionDetail extends ProductionSummary {
     variant_name: string
     planned_quantity: string
     accepted_output_quantity: string
+    loss_quantity: string
   }>
   stages: ProductionStage[]
   can_start: boolean
@@ -85,8 +114,7 @@ function token(): string | undefined {
 }
 
 export interface CreateProductionPayload {
-  variant_id: string
-  planned_quantity: string
+  items: Array<{ variant_id: string; planned_quantity: string }>
   priority?: string
   plan?: boolean
   planned_due?: string
@@ -125,10 +153,11 @@ export const productionApi = {
     return apiClient.post<ProductionDetail>(`/api/productions/${id}/cancel`, { reason }, token())
   },
 
-  startStage(productionId: string, stageId: string, inputQuantity?: string) {
+  /** Inputs default to the planned quantity / previous stage's accepted output per product. */
+  startStage(productionId: string, stageId: string, items?: Array<{ item_id: string; input_quantity: string }>) {
     return apiClient.post<ProductionDetail>(
       `/api/productions/${productionId}/stages/${stageId}/start`,
-      { input_quantity: inputQuantity },
+      { items },
       token(),
     )
   },
@@ -137,10 +166,13 @@ export const productionApi = {
     productionId: string,
     stageId: string,
     payload: {
-      accepted_output_quantity: string
-      loss_quantity?: string
       notes?: string
-      losses?: Array<{ reason_code?: string; quantity: string; notes?: string }>
+      items: Array<{
+        item_id: string
+        accepted_output_quantity: string
+        loss_quantity?: string
+        losses?: Array<{ reason_code?: string; quantity: string; notes?: string }>
+      }>
     },
   ) {
     return apiClient.post<ProductionDetail>(

@@ -20,6 +20,10 @@ class ProductionLoss
     #[ORM\JoinColumn(name: 'stage_execution_id', referencedColumnName: 'id', nullable: false, onDelete: 'CASCADE')]
     private StageExecution $stageExecution;
 
+    #[ORM\ManyToOne(targetEntity: ProductionItem::class)]
+    #[ORM\JoinColumn(name: 'production_item_id', referencedColumnName: 'id', nullable: true, onDelete: 'CASCADE')]
+    private ?ProductionItem $productionItem;
+
     #[ORM\ManyToOne(targetEntity: ProductionLossReason::class)]
     #[ORM\JoinColumn(name: 'loss_reason_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')]
     private ?ProductionLossReason $lossReason;
@@ -47,11 +51,13 @@ class ProductionLoss
         ?string $reasonCode = null,
         ?string $notes = null,
         ?EntityId $recordedBy = null,
+        ?ProductionItem $productionItem = null,
     ) {
         $this->id = $id->toString();
         $this->stageExecution = $stageExecution;
         $this->quantity = $quantity->amount();
         $this->lossReason = $lossReason;
+        $this->productionItem = $productionItem;
         $this->reasonCode = $reasonCode ?? $lossReason?->getCode();
         $this->notes = $notes;
         $this->recordedBy = $recordedBy?->toString();
@@ -67,6 +73,11 @@ class ProductionLoss
     public function getStageExecution(): StageExecution
     {
         return $this->stageExecution;
+    }
+
+    public function getProductionItem(): ?ProductionItem
+    {
+        return $this->productionItem;
     }
 
     public function getLossReason(): ?ProductionLossReason

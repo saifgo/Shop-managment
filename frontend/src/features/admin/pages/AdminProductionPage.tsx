@@ -13,23 +13,24 @@ import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   CreateProductionDialog,
-  type ProductionPrefill,
+  type ProductionLinePrefill,
 } from '@/features/admin/components/CreateProductionDialog'
 import { useAuth } from '@/features/auth/hooks/useAuth'
-import { productionApi } from '@/lib/api/production'
+import { productionApi, type ProductionDemandRow, type ProductionSummary } from '@/lib/api/production'
 import { PERMISSIONS } from '@/lib/auth/permissions'
+import { formatQuantity } from '@/lib/format'
 
 type ProductionView = 'list' | 'board' | 'demand'
 
 export function AdminProductionPage() {
   const [view, setView] = useState<ProductionView>('list')
   const [createOpen, setCreateOpen] = useState(false)
-  const [prefill, setPrefill] = useState<ProductionPrefill | null>(null)
+  const [prefill, setPrefill] = useState<ProductionLinePrefill[] | null>(null)
   const queryClient = useQueryClient()
   const { can } = useAuth()
   const canManage = can(PERMISSIONS.productionManage)
 
-  const openCreate = (next: ProductionPrefill | null = null) => {
+  const openCreate = (next: ProductionLinePrefill[] | null = null) => {
     setPrefill(next)
     setCreateOpen(true)
   }
@@ -52,6 +53,7 @@ export function AdminProductionPage() {
   })
 
   const boardColumns = buildBoardColumns(data?.items ?? [])
+  const shortages = (demandQuery.data?.items ?? []).filter((row) => Number(row.to_produce) > 0)
 
   return (
     <section className="flex flex-col gap-6">
@@ -112,10 +114,14 @@ export function AdminProductionPage() {
                     <Link to={`/admin/production/${production.id}`}>{production.reference}</Link>
                   ),
                 },
-                { key: 'sku', header: 'SKU', cell: (production) => production.sku },
+                {
+                  key: 'products',
+                  header: 'Products',
+                  cell: (production) => <ProductsSummary production={production} />,
+                },
                 {
                   key: 'planned',
-                  header: 'Planned',
+                  header: 'Planned (total)',
                   cell: (production) => (
                     <span className="tabular-nums">{production.planned_quantity}</span>
                   ),
@@ -178,7 +184,9 @@ export function AdminProductionPage() {
                       className="flex flex-col gap-2 rounded-lg border border-border p-3"
                     >
                       <span className="font-medium">{production.reference}</span>
-                      <span className="text-sm text-muted-foreground">{production.sku}</span>
+                      <span className="text-sm text-muted-foreground">
+                        <ProductsSummary production={production} />
+                      </span>
                       <StatusBadge status={production.status} />
                     </Link>
                   ))}
@@ -193,77 +201,83 @@ export function AdminProductionPage() {
       ) : null}
 
       {view === 'demand' ? (
-        <QueryState
-          isLoading={demandQuery.isLoading}
-          error={demandQuery.error ? 'Unable to load production demand.' : null}
-          isEmpty={demandQuery.data?.items.length === 0}
-          emptyTitle="No demand to produce"
-          emptyDescription="Open orders will appear here when stock cannot cover them."
-        >
-          {demandQuery.data ? (
-            <ResponsiveTable
-              wide
-              data={demandQuery.data.items}
-              getRowKey={(row) => row.variant_id}
-              columns={[
-                { key: 'product', header: 'Product', primary: true, cell: (row) => row.product_name },
-                {
-                  key: 'variant',
-                  header: 'Variant',
-                  cell: (row) => `${row.variant_name} (${row.sku})`,
-                },
-                {
-                  key: 'ordered',
-                  header: 'Ordered',
-                  cell: (row) => <span className="tabular-nums">{row.ordered}</span>,
-                },
-                {
-                  key: 'reserved',
-                  header: 'Reserved',
-                  cell: (row) => <span className="tabular-nums">{row.reserved}</span>,
-                },
-                {
-                  key: 'on_hand',
-                  header: 'On hand',
-                  cell: (row) => <span className="tabular-nums">{row.on_hand}</span>,
-                },
-                {
-                  key: 'net_demand',
-                  header: 'Net demand',
-                  cell: (row) => <span className="tabular-nums">{row.net_demand}</span>,
-                },
-                {
-                  key: 'in_production',
-                  header: 'In production',
-                  cell: (row) => <span className="tabular-nums">{row.already_in_production}</span>,
-                },
-                {
-                  key: 'to_produce',
-                  header: 'To produce',
-                  cell: (row) => <span className="tabular-nums">{row.to_produce}</span>,
-                },
-              ]}
-              rowAction={(row) =>
-                canManage ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      openCreate({
-                        variant_id: row.variant_id,
-                        label: `${row.product_name} — ${row.variant_name}`,
-                        sku: row.sku,
-                        quantity: Number(row.to_produce) > 0 ? row.to_produce : undefined,
-                      })
-                    }
-                  >
-                    Produce
-                  </Button>
-                ) : null
-              }
-            />
+        <div className="flex flex-col gap-4">
+          {canManage && shortages.length > 1 ? (
+            <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground">
+                {shortages.length} products are short. Plan them together in one production run.
+              </p>
+              <Button onClick={() => openCreate(shortages.map(toPrefill))}>
+                <PlusIcon data-icon="inline-start" />
+                Produce all shortages
+              </Button>
+            </div>
           ) : null}
-        </QueryState>
+          <QueryState
+            isLoading={demandQuery.isLoading}
+            error={demandQuery.error ? 'Unable to load production demand.' : null}
+            isEmpty={demandQuery.data?.items.length === 0}
+            emptyTitle="No demand to produce"
+            emptyDescription="Open orders will appear here when stock cannot cover them."
+          >
+            {demandQuery.data ? (
+              <ResponsiveTable
+                wide
+                data={demandQuery.data.items}
+                getRowKey={(row) => row.variant_id}
+                columns={[
+                  { key: 'product', header: 'Product', primary: true, cell: (row) => row.product_name },
+                  {
+                    key: 'variant',
+                    header: 'Variant',
+                    cell: (row) => `${row.variant_name} (${row.sku})`,
+                  },
+                  {
+                    key: 'ordered',
+                    header: 'Ordered',
+                    cell: (row) => <span className="tabular-nums">{row.ordered}</span>,
+                  },
+                  {
+                    key: 'reserved',
+                    header: 'Reserved',
+                    cell: (row) => <span className="tabular-nums">{row.reserved}</span>,
+                  },
+                  {
+                    key: 'on_hand',
+                    header: 'On hand',
+                    cell: (row) => <span className="tabular-nums">{row.on_hand}</span>,
+                  },
+                  {
+                    key: 'net_demand',
+                    header: 'Net demand',
+                    cell: (row) => <span className="tabular-nums">{row.net_demand}</span>,
+                  },
+                  {
+                    key: 'in_production',
+                    header: 'In production',
+                    cell: (row) => <span className="tabular-nums">{row.already_in_production}</span>,
+                  },
+                  {
+                    key: 'to_produce',
+                    header: 'To produce',
+                    cell: (row) => <span className="tabular-nums">{row.to_produce}</span>,
+                  },
+                ]}
+                rowAction={(row) =>
+                  canManage ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openCreate([toPrefill(row)])}
+                    >
+                      Produce
+                    </Button>
+                  ) : null
+                }
+              />
+            ) : null}
+          </QueryState>
+        </div>
       ) : null}
 
       <CreateProductionDialog open={createOpen} onOpenChange={setCreateOpen} prefill={prefill} />
@@ -271,15 +285,30 @@ export function AdminProductionPage() {
   )
 }
 
-function buildBoardColumns(
-  productions: Array<{
-    id: string
-    reference: string
-    sku: string | null
-    status: string
-    current_stage_name?: string | null
-  }>,
-) {
+function toPrefill(row: ProductionDemandRow): ProductionLinePrefill {
+  return {
+    variant_id: row.variant_id,
+    label: `${row.product_name} — ${row.variant_name}`,
+    sku: row.sku,
+    quantity: Number(row.to_produce) > 0 ? row.to_produce : undefined,
+  }
+}
+
+/** "VAS-M ×6" for one product, "VAS-M ×6 +2 more" when the run makes several. */
+function ProductsSummary({ production }: { production: ProductionSummary }) {
+  const [first, ...rest] = production.products ?? []
+
+  if (!first) return <>{production.sku ?? '—'}</>
+
+  return (
+    <span title={production.products.map((p) => `${p.sku} ×${formatQuantity(p.planned_quantity)}`).join('\n')}>
+      {first.sku} <span className="tabular-nums">×{formatQuantity(first.planned_quantity)}</span>
+      {rest.length > 0 ? <span className="text-muted-foreground"> +{rest.length} more</span> : null}
+    </span>
+  )
+}
+
+function buildBoardColumns(productions: ProductionSummary[]) {
   const active = productions.filter((p) => ['IN_PROGRESS', 'PAUSED', 'PLANNED'].includes(p.status))
   const stageNames = [...new Set(active.map((p) => p.current_stage_name ?? 'Not started'))]
 

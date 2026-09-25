@@ -8,7 +8,6 @@ use App\Domain\Production\ProductionPriority;
 use App\Domain\Production\ProductionStatus;
 use App\Domain\Shared\CompanyScoped;
 use App\Domain\Shared\EntityId;
-use App\Domain\Shared\Quantity;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
@@ -75,6 +74,7 @@ class ProductionOrder implements CompanyScoped
 
     /** @var Collection<int, ProductionItem> */
     #[ORM\OneToMany(mappedBy: 'productionOrder', targetEntity: ProductionItem::class, cascade: ['persist'], orphanRemoval: true)]
+    #[ORM\OrderBy(['id' => 'ASC'])]
     private Collection $items;
 
     /** @var Collection<int, StageExecution> */
@@ -304,16 +304,5 @@ class ProductionOrder implements CompanyScoped
         }
 
         return true;
-    }
-
-    public function getAcceptedOutputQuantity(): Quantity
-    {
-        $last = $this->getLastCompletedStageExecution();
-
-        if ($last === null) {
-            return Quantity::zero();
-        }
-
-        return $last->getAcceptedOutputQuantity();
     }
 }

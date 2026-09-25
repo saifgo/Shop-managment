@@ -17,9 +17,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { VariantPicker } from '@/features/admin/components/VariantPicker'
 import { inventoryApi } from '@/lib/api/inventory'
-
-const DECIMAL = /^\d+(\.\d{1,4})?$/
-const SCALE = 10_000
+import { DECIMAL, fromUnits, toUnits } from '@/lib/quantity'
 
 type AdjustmentMode = 'add' | 'remove' | 'set'
 
@@ -44,18 +42,6 @@ interface StockAdjustmentDialogProps {
   onOpenChange: (open: boolean) => void
   /** Pre-selects the stock row being adjusted; otherwise the user picks a product. */
   target?: AdjustmentTarget | null
-}
-
-/** Exact 4-decimal arithmetic on integers, so "set to count" never produces float noise. */
-function toUnits(value: string): number {
-  const [whole, fraction = ''] = value.trim().split('.')
-  return Number(whole) * SCALE + Number(fraction.padEnd(4, '0').slice(0, 4))
-}
-
-function fromUnits(units: number): string {
-  const sign = units < 0 ? '-' : ''
-  const abs = Math.abs(units)
-  return `${sign}${Math.floor(abs / SCALE)}.${String(abs % SCALE).padStart(4, '0')}`
 }
 
 export function StockAdjustmentDialog({ open, onOpenChange, target }: StockAdjustmentDialogProps) {

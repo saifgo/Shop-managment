@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Trash2Icon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -22,7 +23,7 @@ import { productionApi } from '@/lib/api/production'
 
 const DECIMAL = /^\d+(\.\d{1,4})?$/
 
-export interface ProductionPrefill {
+export interface ProductionLinePrefill {
   variant_id: string
   label: string
   sku: string
@@ -32,37 +33,30 @@ export interface ProductionPrefill {
 interface CreateProductionDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Pre-selects a variant (and quantity), e.g. from the demand planning view. */
-  prefill?: ProductionPrefill | null
+  /** Pre-selects products (and quantities), e.g. from the demand planning view. */
+  prefill?: ProductionLinePrefill[] | null
 }
 
-interface FormState {
-  variant: { variant_id: string; label: string; sku: string } | null
+interface Line {
+  variant_id: string
+  label: string
+  sku: string
   quantity: string
-  priority: string
-  plannedDue: string
-  notes: string
-  plan: boolean
 }
 
-function initialState(prefill?: ProductionPrefill | null): FormState {
-  return {
-    variant: prefill ? { variant_id: prefill.variant_id, label: prefill.label, sku: prefill.sku } : null,
-    quantity: prefill?.quantity ?? '',
-    priority: 'NORMAL',
-    plannedDue: '',
-    notes: '',
-    plan: true,
-  }
+function isValidQuantity(value: string) {
+  return DECIMAL.test(value.trim()) && Number(value) > 0
 }
 
 export function CreateProductionDialog({ open, onOpenChange, prefill }: CreateProductionDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>New production order</DialogTitle>
-          <DialogDescription>Choose what to make and how many. Stages are created when you start it.</DialogDescription>
+          <DialogDescription>
+            Add every product this run will make. They move through the stages together.
+          </DialogDescription>
         </DialogHeader>
         {/* The popup unmounts when closed, so the form starts fresh every time it opens. */}
         <CreateProductionForm prefill={prefill} onClose={() => onOpenChange(false)} />
@@ -71,21 +65,46 @@ export function CreateProductionDialog({ open, onOpenChange, prefill }: CreatePr
   )
 }
 
-function CreateProductionForm({ prefill, onClose }: { prefill?: ProductionPrefill | null; onClose: () => void }) {
+function CreateProductionForm({
+  prefill,
+  onClose,
+}: {
+  prefill?: ProductionLinePrefill[] | null
+  onClose: () => void
+}) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [form, setForm] = useState<FormState>(() => initialState(prefill))
+  const [lines, setLines] = useState<Line[]>(() =>
+    (prefill ?? []).map((line) => ({ ...line, quantity: line.quantity ?? '' })),
+  )
+  const [priority, setPriority] = useState('NORMAL')
+  const [plannedDue, setPlannedDue] = useState('')
+  const [notes, setNotes] = useState('')
+  const [plan, setPlan] = useState(true)
   const [showErrors, setShowErrors] = useState(false)
+
+  const addLine = (variant: { variant_id: string; label: string; sku: string }) => {
+    setLines((current) =>
+      current.some((line) => line.variant_id === variant.variant_id)
+        ? current
+        : [...current, { variant_id: variant.variant_id, label: variant.label, sku: variant.sku, quantity: '' }],
+    )
+  }
+
+  const updateQuantity = (variantId: string, quantity: string) =>
+    setLines((current) => current.map((line) => (line.variant_id === variantId ? { ...line, quantity } : line)))
+
+  const removeLine = (variantId: string) =>
+    setLines((current) => current.filter((line) => line.variant_id !== variantId))
 
   const create = useMutation({
     mutationFn: () =>
       productionApi.create({
-        variant_id: form.variant!.variant_id,
-        planned_quantity: form.quantity.trim(),
-        priority: form.priority,
-        plan: form.plan,
-        planned_due: form.plannedDue || undefined,
-        notes: form.notes.trim() || undefined,
+        items: lines.map((line) => ({ variant_id: line.variant_id, planned_quantity: line.quantity.trim() })),
+        priority,
+        plan,
+        planned_due: plannedDue || undefined,
+        notes: notes.trim() || undefined,
       }),
     onSuccess: (production) => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'productions'] })
@@ -96,110 +115,100 @@ function CreateProductionForm({ prefill, onClose }: { prefill?: ProductionPrefil
     },
   })
 
-  const quantityValid = DECIMAL.test(form.quantity.trim()) && Number(form.quantity) > 0
-  const canSubmit = form.variant !== null && quantityValid
-
-  const submit = () => {
-    setShowErrors(true)
-    if (canSubmit) create.mutate()
-  }
+  const canSubmit = lines.length > 0 && lines.every((line) => isValidQuantity(line.quantity))
 
   return (
     <form
       className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault()
-        submit()
+        setShowErrors(true)
+        if (canSubmit) create.mutate()
       }}
     >
       <FieldGroup>
-        <Field data-invalid={showErrors && !form.variant ? true : undefined}>
-          <FieldTitle>Product</FieldTitle>
-          {form.variant ? (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate font-medium">{form.variant.label}</span>
-                <span className="text-xs text-muted-foreground">{form.variant.sku}</span>
-              </span>
-              <VariantPicker
-                triggerLabel="Change"
-                onSelect={(variant) =>
-                  setForm((current) => ({
-                    ...current,
-                    variant: { variant_id: variant.variant_id, label: variant.label, sku: variant.sku },
-                  }))
-                }
-              />
-            </div>
+        <Field data-invalid={showErrors && lines.length === 0 ? true : undefined}>
+          <div className="flex items-center justify-between gap-3">
+            <FieldTitle>Products</FieldTitle>
+            <VariantPicker triggerLabel="Add product" onSelect={addLine} />
+          </div>
+
+          {lines.length === 0 ? (
+            <p className={showErrors ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}>
+              Add the products to produce.
+            </p>
           ) : (
-            <VariantPicker
-              triggerLabel="Choose product"
-              onSelect={(variant) =>
-                setForm((current) => ({
-                  ...current,
-                  variant: { variant_id: variant.variant_id, label: variant.label, sku: variant.sku },
-                }))
-              }
-            />
+            <ul className="flex max-h-72 flex-col divide-y divide-border overflow-y-auto rounded-lg border border-border">
+              {lines.map((line) => {
+                const invalid = showErrors && !isValidQuantity(line.quantity)
+                const inputId = `production-qty-${line.variant_id}`
+
+                return (
+                  <li key={line.variant_id} className="flex flex-col gap-1 px-3 py-2">
+                    <div className="flex items-center gap-3">
+                      <label htmlFor={inputId} className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate font-medium">{line.label}</span>
+                        <span className="text-xs text-muted-foreground">{line.sku}</span>
+                      </label>
+                      <Input
+                        id={inputId}
+                        inputMode="decimal"
+                        placeholder="Qty"
+                        className="w-24 tabular-nums"
+                        value={line.quantity}
+                        aria-invalid={invalid ? true : undefined}
+                        onChange={(event) => updateQuantity(line.variant_id, event.target.value)}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Remove ${line.label}`}
+                        onClick={() => removeLine(line.variant_id)}
+                      >
+                        <Trash2Icon />
+                      </Button>
+                    </div>
+                    {invalid ? <FieldError>Enter a quantity above 0.</FieldError> : null}
+                  </li>
+                )
+              })}
+            </ul>
           )}
-          {showErrors && !form.variant ? <FieldError>Choose the product to produce.</FieldError> : null}
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field data-invalid={showErrors && !quantityValid ? true : undefined}>
-            <FieldLabel htmlFor="production-quantity">Quantity</FieldLabel>
-            <Input
-              id="production-quantity"
-              inputMode="decimal"
-              placeholder="0"
-              className="tabular-nums"
-              value={form.quantity}
-              aria-invalid={showErrors && !quantityValid ? true : undefined}
-              onChange={(event) => setForm({ ...form, quantity: event.target.value })}
-            />
-            {showErrors && !quantityValid ? <FieldError>Enter a quantity above 0.</FieldError> : null}
-          </Field>
           <Field>
             <FieldLabel htmlFor="production-priority">Priority</FieldLabel>
             <NativeSelect
               id="production-priority"
               className="w-full"
-              value={form.priority}
-              onChange={(event) => setForm({ ...form, priority: event.target.value })}
+              value={priority}
+              onChange={(event) => setPriority(event.target.value)}
             >
               <NativeSelectOption value="NORMAL">Normal</NativeSelectOption>
               <NativeSelectOption value="HIGH">High</NativeSelectOption>
               <NativeSelectOption value="URGENT">Urgent</NativeSelectOption>
             </NativeSelect>
           </Field>
+          <Field>
+            <FieldLabel htmlFor="production-due">Due date (optional)</FieldLabel>
+            <Input
+              id="production-due"
+              type="date"
+              value={plannedDue}
+              onChange={(event) => setPlannedDue(event.target.value)}
+            />
+          </Field>
         </div>
 
         <Field>
-          <FieldLabel htmlFor="production-due">Due date (optional)</FieldLabel>
-          <Input
-            id="production-due"
-            type="date"
-            value={form.plannedDue}
-            onChange={(event) => setForm({ ...form, plannedDue: event.target.value })}
-          />
-        </Field>
-
-        <Field>
           <FieldLabel htmlFor="production-notes">Notes (optional)</FieldLabel>
-          <Textarea
-            id="production-notes"
-            rows={2}
-            value={form.notes}
-            onChange={(event) => setForm({ ...form, notes: event.target.value })}
-          />
+          <Textarea id="production-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
         </Field>
 
         <Field orientation="horizontal">
-          <Checkbox
-            id="production-plan"
-            checked={form.plan}
-            onCheckedChange={(checked) => setForm({ ...form, plan: checked === true })}
-          />
+          <Checkbox id="production-plan" checked={plan} onCheckedChange={(checked) => setPlan(checked === true)} />
           <div className="flex flex-col gap-1">
             <FieldLabel htmlFor="production-plan">Mark as planned</FieldLabel>
             <FieldDescription>Planned orders count toward “In production” in demand planning.</FieldDescription>

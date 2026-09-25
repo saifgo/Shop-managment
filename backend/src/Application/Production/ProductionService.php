@@ -24,12 +24,17 @@ use App\Infrastructure\Persistence\Entity\Production\ProductionLossReason;
 use App\Infrastructure\Persistence\Entity\Production\ProductionOrder;
 use App\Infrastructure\Persistence\Entity\Production\ProductionStage;
 use App\Infrastructure\Persistence\Entity\Production\StageExecution;
+use App\Infrastructure\Persistence\Entity\Production\StageExecutionLine;
 use App\Infrastructure\Persistence\UnitOfWork;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
+/**
+ * A production order makes one or more products (production items). All products move through
+ * the configured stages together; each stage records input / accepted output / loss per product.
+ */
 final class ProductionService
 {
     public function __construct(
@@ -45,9 +50,10 @@ final class ProductionService
 
     /**
      * @param array{
-     *     variant_id: string,
-     *     planned_quantity: string,
-     *     priority?: string,
+     *     items?: list<array{variant_id?: string|null, planned_quantity?: string|null}>|null,
+     *     variant_id?: string|null,
+     *     planned_quantity?: string|null,
+     *     priority?: string|null,
      *     planned_start?: string|null,
      *     planned_due?: string|null,
      *     notes?: string|null,
@@ -73,8 +79,7 @@ final class ProductionService
                 }
             }
 
-            $variant = $this->findVariant($user, $payload['variant_id']);
-            $plannedQuantity = $this->parsePositiveQuantity($payload['planned_quantity'], 'planned_quantity');
+            $lines = $this->resolveCreateLines($user, $payload);
             $reference = $this->generateReference($user->companyId());
             $priority = ProductionPriority::tryFrom(strtoupper($payload['priority'] ?? 'NORMAL')) ?? ProductionPriority::Normal;
 
@@ -92,12 +97,9 @@ final class ProductionService
                 idempotencyKey: $idempotencyKey,
             );
 
-            new ProductionItem(
-                EntityId::generate(),
-                $order,
-                $variant,
-                $plannedQuantity,
-            );
+            foreach ($lines as $line) {
+                new ProductionItem(EntityId::generate(), $order, $line['variant'], $line['quantity']);
+            }
 
             if (($payload['plan'] ?? false) === true) {
                 $order->markPlanned();
@@ -152,7 +154,14 @@ final class ProductionService
     }
 
     /**
-     * @param array{input_quantity?: string|null} $payload
+     * Inputs default to the planned quantity (first stage) or the previous stage's accepted
+     * output, per product. `items` overrides individual products; `input_quantity` is the
+     * legacy single-product override.
+     *
+     * @param array{
+     *     input_quantity?: string|null,
+     *     items?: list<array{item_id?: string|null, input_quantity?: string|null}>|null
+     * } $payload
      *
      * @return array<string, mixed>
      */
@@ -170,8 +179,26 @@ final class ProductionService
             }
 
             $execution = $this->findStageExecution($order, $stageId);
-            $inputQuantity = $this->resolveStageInput($order, $execution, $payload['input_quantity'] ?? null);
-            $execution->start($inputQuantity, EntityId::fromString($user->getId()));
+
+            if ($execution->getStatus() !== StageExecutionStatus::Pending) {
+                throw new BadRequestHttpException('Only pending stages can be started.');
+            }
+
+            $overrides = $this->resolveInputOverrides($order, $payload);
+            $inputs = [];
+            $total = Quantity::zero();
+
+            foreach ($order->getItems() as $item) {
+                $quantity = $overrides[$item->getId()] ?? $this->defaultStageInput($order, $execution, $item);
+                $inputs[] = ['item' => $item, 'quantity' => $quantity];
+                $total = $total->add($quantity);
+            }
+
+            if ($total->isZero()) {
+                throw new BadRequestHttpException('Nothing left to process at this stage.');
+            }
+
+            $execution->start($inputs, EntityId::fromString($user->getId()));
 
             return $this->serialize($order);
         });
@@ -179,10 +206,16 @@ final class ProductionService
 
     /**
      * @param array{
-     *     accepted_output_quantity: string,
-     *     loss_quantity?: string,
+     *     items?: list<array{
+     *         item_id?: string|null,
+     *         accepted_output_quantity?: string|null,
+     *         loss_quantity?: string|null,
+     *         losses?: list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>|null
+     *     }>|null,
+     *     accepted_output_quantity?: string|null,
+     *     loss_quantity?: string|null,
      *     notes?: string|null,
-     *     losses?: list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>
+     *     losses?: list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>|null
      * } $payload
      *
      * @return array<string, mixed>
@@ -192,44 +225,38 @@ final class ProductionService
         return $this->unitOfWork->transactional(function () use ($user, $productionId, $stageId, $payload): array {
             $order = $this->findProduction($user, $productionId);
             $execution = $this->findStageExecution($order, $stageId);
-            $stage = $execution->getProductionStage();
 
-            $accepted = Quantity::of($payload['accepted_output_quantity']);
-            $loss = Quantity::of($payload['loss_quantity'] ?? '0.0000');
-
-            $this->quantityReconciler->reconcile(
-                $execution->getInputQuantity(),
-                $accepted,
-                $loss,
-                $stage->getReconciliationMode(),
-            );
-
-            if (isset($payload['losses']) && is_array($payload['losses'])) {
-                $lossTotal = Quantity::zero();
-                foreach ($payload['losses'] as $lossEntry) {
-                    $lossQty = Quantity::of($lossEntry['quantity']);
-                    $lossTotal = $lossTotal->add($lossQty);
-                    $reason = isset($lossEntry['loss_reason_id'])
-                        ? $this->findLossReason($user, $lossEntry['loss_reason_id'])
-                        : null;
-
-                    $this->entityManager->persist(new ProductionLoss(
-                        EntityId::generate(),
-                        $execution,
-                        $lossQty,
-                        $reason,
-                        $lossEntry['reason_code'] ?? null,
-                        $lossEntry['notes'] ?? null,
-                        EntityId::fromString($user->getId()),
-                    ));
-                }
-
-                if (!$lossTotal->equals($loss)) {
-                    throw new BadRequestHttpException('Loss line items must sum to loss_quantity.');
-                }
+            if ($execution->getStatus() !== StageExecutionStatus::InProgress) {
+                throw new BadRequestHttpException('Only in-progress stages can be completed.');
             }
 
-            $execution->complete($accepted, $loss, $payload['notes'] ?? null);
+            $mode = $execution->getProductionStage()->getReconciliationMode();
+            $results = $this->resolveCompletionResults($execution, $payload);
+
+            foreach ($execution->getLines() as $line) {
+                $item = $line->getProductionItem();
+                $result = $results[$item->getId()];
+                $accepted = $this->parseQuantity($result['accepted_output_quantity'] ?? null, 'accepted_output_quantity');
+                $loss = $this->parseQuantity($result['loss_quantity'] ?? null, 'loss_quantity', allowEmpty: true);
+                $label = $item->getVariant()->getSku();
+
+                if ($line->getInputQuantity()->isZero()) {
+                    if (!$accepted->isZero() || !$loss->isZero()) {
+                        throw new BadRequestHttpException(sprintf('%s: nothing entered this stage, so accepted output and loss must be 0.', $label));
+                    }
+                } else {
+                    try {
+                        $this->quantityReconciler->reconcile($line->getInputQuantity(), $accepted, $loss, $mode);
+                    } catch (\DomainException $exception) {
+                        throw new BadRequestHttpException(sprintf('%s: %s', $label, $exception->getMessage()), $exception);
+                    }
+                }
+
+                $this->recordLosses($user, $execution, $item, $loss, $result['losses'] ?? null);
+                $line->record($accepted, $loss);
+            }
+
+            $execution->complete($payload['notes'] ?? null);
 
             if ($order->allStagesCompleted()) {
                 $this->completeProduction($order, $user);
@@ -253,23 +280,28 @@ final class ProductionService
         $qb = $this->entityManager->createQueryBuilder()
             // No DISTINCT: product_variants.attributes is a JSON column and PostgreSQL cannot
             // compare json values. The fetch-join Paginator already de-duplicates root rows.
-            ->select('p', 'i', 'v')
+            ->select('p', 'i', 'v', 'pr')
             ->from(ProductionOrder::class, 'p')
             ->join('p.items', 'i')
             ->join('i.variant', 'v')
+            ->join('v.product', 'pr')
             ->where('p.companyId = :companyId')
             ->setParameter('companyId', $user->companyId()->toString())
             ->orderBy('p.createdAt', 'DESC');
 
-        if ($status !== null) {
+        if ($status !== null && $status !== '') {
             $qb->andWhere('p.status = :status')->setParameter('status', $status);
         }
 
-        if ($variantId !== null) {
-            $qb->andWhere('v.id = :variantId')->setParameter('variantId', $variantId);
+        if ($variantId !== null && $variantId !== '') {
+            // Filter through a subquery so the fetch-joined items collection stays complete.
+            $qb->andWhere(sprintf(
+                'EXISTS (SELECT fi.id FROM %s fi WHERE fi.productionOrder = p AND IDENTITY(fi.variant) = :variantId)',
+                ProductionItem::class,
+            ))->setParameter('variantId', $variantId);
         }
 
-        if ($stageId !== null) {
+        if ($stageId !== null && $stageId !== '') {
             $qb->join('p.stageExecutions', 'se')
                 ->join('se.productionStage', 'st')
                 ->andWhere('st.id = :stageId')
@@ -316,8 +348,10 @@ final class ProductionService
                 'started_at' => $execution->getStartedAt()?->format(DATE_ATOM),
                 'completed_at' => $execution->getCompletedAt()?->format(DATE_ATOM),
                 'notes' => $execution->getNotes(),
+                'lines' => $this->serializeLines($execution),
                 'losses' => array_map(static fn (ProductionLoss $loss): array => [
                     'id' => $loss->getId(),
+                    'item_id' => $loss->getProductionItem()?->getId(),
                     'reason_code' => $loss->getReasonCode(),
                     'quantity' => $loss->getQuantity()->amount(),
                     'notes' => $loss->getNotes(),
@@ -328,19 +362,191 @@ final class ProductionService
         return ['items' => $events];
     }
 
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return list<array{variant: ProductVariant, quantity: Quantity}>
+     */
+    private function resolveCreateLines(User $user, array $payload): array
+    {
+        $rawItems = $payload['items'] ?? null;
+
+        if ($rawItems === null || $rawItems === []) {
+            if (($payload['variant_id'] ?? null) === null || ($payload['variant_id'] ?? '') === '') {
+                throw new BadRequestHttpException('Add at least one product to produce.');
+            }
+
+            $rawItems = [['variant_id' => $payload['variant_id'], 'planned_quantity' => $payload['planned_quantity'] ?? null]];
+        }
+
+        $lines = [];
+        $seen = [];
+
+        foreach (array_values($rawItems) as $index => $rawItem) {
+            $variantId = is_array($rawItem) ? ($rawItem['variant_id'] ?? null) : null;
+
+            if (!is_string($variantId) || $variantId === '') {
+                throw new BadRequestHttpException(sprintf('items[%d].variant_id is required.', $index));
+            }
+
+            if (isset($seen[$variantId])) {
+                throw new BadRequestHttpException('Each product can only appear once in a production order.');
+            }
+            $seen[$variantId] = true;
+
+            $lines[] = [
+                'variant' => $this->findVariant($user, $variantId),
+                'quantity' => $this->parsePositiveQuantity((string) ($rawItem['planned_quantity'] ?? ''), sprintf('items[%d].planned_quantity', $index)),
+            ];
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, Quantity> keyed by production item id
+     */
+    private function resolveInputOverrides(ProductionOrder $order, array $payload): array
+    {
+        $overrides = [];
+
+        foreach ($payload['items'] ?? [] as $index => $entry) {
+            $itemId = is_array($entry) ? ($entry['item_id'] ?? null) : null;
+            $quantity = is_array($entry) ? ($entry['input_quantity'] ?? null) : null;
+
+            if ($quantity === null || $quantity === '') {
+                continue;
+            }
+
+            $item = is_string($itemId) ? $this->findItem($order, $itemId) : null;
+            if ($item === null) {
+                throw new BadRequestHttpException(sprintf('items[%d].item_id is not part of this production order.', $index));
+            }
+
+            $overrides[$item->getId()] = $this->parseQuantity((string) $quantity, sprintf('items[%d].input_quantity', $index));
+        }
+
+        $legacy = $payload['input_quantity'] ?? null;
+        if ($overrides === [] && $legacy !== null && $legacy !== '') {
+            if ($order->getItems()->count() !== 1) {
+                throw new BadRequestHttpException('This order has several products: pass input quantities per product in items[].');
+            }
+
+            $overrides[$order->getPrimaryItem()->getId()] = $this->parseQuantity((string) $legacy, 'input_quantity');
+        }
+
+        return $overrides;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, array<string, mixed>> keyed by production item id; one entry per stage line
+     */
+    private function resolveCompletionResults(StageExecution $execution, array $payload): array
+    {
+        $results = [];
+        $order = $execution->getProductionOrder();
+        $rawItems = $payload['items'] ?? null;
+
+        if ($rawItems === null || $rawItems === []) {
+            if ($execution->getLines()->count() !== 1) {
+                throw new BadRequestHttpException('This order has several products: record results per product in items[].');
+            }
+
+            $line = $execution->getLines()->first();
+            \assert($line instanceof StageExecutionLine);
+            $results[$line->getProductionItem()->getId()] = [
+                'accepted_output_quantity' => $payload['accepted_output_quantity'] ?? null,
+                'loss_quantity' => $payload['loss_quantity'] ?? null,
+                'losses' => $payload['losses'] ?? null,
+            ];
+        } else {
+            foreach ($rawItems as $index => $entry) {
+                $itemId = is_array($entry) ? ($entry['item_id'] ?? null) : null;
+                $item = is_string($itemId) ? $this->findItem($order, $itemId) : null;
+
+                if ($item === null) {
+                    throw new BadRequestHttpException(sprintf('items[%d].item_id is not part of this production order.', $index));
+                }
+
+                if (isset($results[$item->getId()])) {
+                    throw new BadRequestHttpException('Each product can only be reported once per stage.');
+                }
+
+                $results[$item->getId()] = $entry;
+            }
+        }
+
+        foreach ($execution->getLines() as $line) {
+            if (!isset($results[$line->getProductionItem()->getId()])) {
+                throw new BadRequestHttpException(sprintf(
+                    'Missing results for %s.',
+                    $line->getProductionItem()->getVariant()->getSku(),
+                ));
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * @param list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>|null $losses
+     */
+    private function recordLosses(User $user, StageExecution $execution, ProductionItem $item, Quantity $loss, ?array $losses): void
+    {
+        if ($losses === null || $losses === []) {
+            return;
+        }
+
+        $lossTotal = Quantity::zero();
+        foreach ($losses as $lossEntry) {
+            $lossQty = $this->parseQuantity((string) ($lossEntry['quantity'] ?? ''), 'losses.quantity');
+            $lossTotal = $lossTotal->add($lossQty);
+            $reason = isset($lossEntry['loss_reason_id']) && $lossEntry['loss_reason_id'] !== ''
+                ? $this->findLossReason($user, $lossEntry['loss_reason_id'])
+                : null;
+
+            $this->entityManager->persist(new ProductionLoss(
+                EntityId::generate(),
+                $execution,
+                $lossQty,
+                $reason,
+                $lossEntry['reason_code'] ?? null,
+                $lossEntry['notes'] ?? null,
+                EntityId::fromString($user->getId()),
+                $item,
+            ));
+        }
+
+        if (!$lossTotal->equals($loss)) {
+            throw new BadRequestHttpException(sprintf(
+                '%s: loss line items must sum to loss_quantity.',
+                $item->getVariant()->getSku(),
+            ));
+        }
+    }
+
     private function completeProduction(ProductionOrder $order, User $user): void
     {
-        $accepted = $order->getAcceptedOutputQuantity();
-        $item = $order->getPrimaryItem();
-        $item->setAcceptedOutputQuantity($accepted);
-
         $location = $this->availabilityService->resolveDefaultLocation($order->companyId());
 
         if ($location === null) {
             throw new \DomainException('No stock location configured.');
         }
 
-        if (!$accepted->isZero()) {
+        $lastStage = $order->getLastCompletedStageExecution();
+
+        foreach ($order->getItems() as $item) {
+            $accepted = $lastStage?->getLineForItem($item)?->getAcceptedOutputQuantity() ?? Quantity::zero();
+            $item->setAcceptedOutputQuantity($accepted);
+
+            if ($accepted->isZero()) {
+                continue;
+            }
+
             $this->stockLedgerService->postMovement(
                 companyId: $order->companyId(),
                 variant: $item->getVariant(),
@@ -393,29 +599,43 @@ final class ProductionService
         }
     }
 
-    private function resolveStageInput(ProductionOrder $order, StageExecution $execution, ?string $inputOverride): Quantity
+    private function defaultStageInput(ProductionOrder $order, StageExecution $execution, ProductionItem $item): Quantity
     {
-        if ($inputOverride !== null) {
-            return Quantity::of($inputOverride);
+        $previous = $this->previousStageExecution($order, $execution);
+
+        if ($previous === null) {
+            return $item->getPlannedQuantity();
         }
 
-        if ($execution->getStageSequence() === 1) {
-            return $order->getPrimaryItem()->getPlannedQuantity();
+        if ($previous->getStatus() !== StageExecutionStatus::Completed) {
+            throw new BadRequestHttpException('Previous stage must be completed first.');
         }
 
-        $previousSequence = $execution->getStageSequence() - 1;
+        $line = $previous->getLineForItem($item);
+
+        if ($line !== null) {
+            return $line->getAcceptedOutputQuantity();
+        }
+
+        // Stage completed before per-product lines existed: its totals belong to the single product.
+        return $order->getItems()->count() === 1 ? $previous->getAcceptedOutputQuantity() : Quantity::zero();
+    }
+
+    private function previousStageExecution(ProductionOrder $order, StageExecution $execution): ?StageExecution
+    {
+        $previous = null;
 
         foreach ($order->getStageExecutions() as $stageExecution) {
-            if ($stageExecution->getStageSequence() === $previousSequence) {
-                if ($stageExecution->getStatus() !== StageExecutionStatus::Completed) {
-                    throw new BadRequestHttpException('Previous stage must be completed first.');
-                }
+            if ($stageExecution->getStageSequence() >= $execution->getStageSequence()) {
+                continue;
+            }
 
-                return $stageExecution->getAcceptedOutputQuantity();
+            if ($previous === null || $stageExecution->getStageSequence() > $previous->getStageSequence()) {
+                $previous = $stageExecution;
             }
         }
 
-        throw new BadRequestHttpException('Unable to resolve stage input quantity.');
+        return $previous;
     }
 
     private function findProduction(User $user, string $productionId): ProductionOrder
@@ -431,6 +651,17 @@ final class ProductionService
         }
 
         return $order;
+    }
+
+    private function findItem(ProductionOrder $order, string $itemId): ?ProductionItem
+    {
+        foreach ($order->getItems() as $item) {
+            if ($item->getId() === $itemId) {
+                return $item;
+            }
+        }
+
+        return null;
     }
 
     private function findStageExecution(ProductionOrder $order, string $stageId): StageExecution
@@ -472,6 +703,23 @@ final class ProductionService
         }
 
         return $reason;
+    }
+
+    private function parseQuantity(?string $amount, string $field, bool $allowEmpty = false): Quantity
+    {
+        if ($amount === null || trim($amount) === '') {
+            if ($allowEmpty) {
+                return Quantity::zero();
+            }
+
+            throw new BadRequestHttpException(sprintf('%s is required.', $field));
+        }
+
+        try {
+            return Quantity::of(trim($amount));
+        } catch (\InvalidArgumentException) {
+            throw new BadRequestHttpException(sprintf('%s must be a number of 0 or more with up to 4 decimals.', $field));
+        }
     }
 
     private function parsePositiveQuantity(string $amount, string $field): Quantity
@@ -521,17 +769,34 @@ final class ProductionService
     /** @return array<string, mixed> */
     private function serializeSummary(ProductionOrder $order): array
     {
-        $item = $order->getItems()->first();
+        $first = $order->getItems()->first();
         $currentStage = $order->getCurrentStageExecution();
+        $plannedTotal = Quantity::zero();
+        $products = [];
+
+        foreach ($order->getItems() as $item) {
+            $plannedTotal = $plannedTotal->add($item->getPlannedQuantity());
+            $products[] = [
+                'item_id' => $item->getId(),
+                'variant_id' => $item->getVariant()->getId(),
+                'sku' => $item->getVariant()->getSku(),
+                'product_name' => $item->getVariant()->getProduct()->getName(),
+                'variant_name' => $item->getVariant()->getName(),
+                'planned_quantity' => $item->getPlannedQuantity()->amount(),
+            ];
+        }
 
         return [
             'id' => $order->getId(),
             'reference' => $order->getReference(),
             'status' => $order->getStatus()->value,
             'priority' => $order->getPriority()->value,
-            'variant_id' => $item instanceof ProductionItem ? $item->getVariant()->getId() : null,
-            'sku' => $item instanceof ProductionItem ? $item->getVariant()->getSku() : null,
-            'planned_quantity' => $item instanceof ProductionItem ? $item->getPlannedQuantity()->amount() : null,
+            // First product, kept for single-product clients; see `products` for the full list.
+            'variant_id' => $first instanceof ProductionItem ? $first->getVariant()->getId() : null,
+            'sku' => $first instanceof ProductionItem ? $first->getVariant()->getSku() : null,
+            'item_count' => count($products),
+            'products' => $products,
+            'planned_quantity' => $plannedTotal->amount(),
             'current_stage_id' => $currentStage?->getProductionStage()->getId(),
             'current_stage_name' => $currentStage?->getProductionStage()->getName(),
             'current_stage_status' => $currentStage?->getStatus()->value,
@@ -540,11 +805,42 @@ final class ProductionService
         ];
     }
 
+    /** @return list<array<string, mixed>> */
+    private function serializeLines(StageExecution $execution): array
+    {
+        $lines = [];
+
+        foreach ($execution->getLines() as $line) {
+            $variant = $line->getProductionItem()->getVariant();
+            $lines[] = [
+                'id' => $line->getId(),
+                'item_id' => $line->getProductionItem()->getId(),
+                'variant_id' => $variant->getId(),
+                'sku' => $variant->getSku(),
+                'product_name' => $variant->getProduct()->getName(),
+                'variant_name' => $variant->getName(),
+                'input_quantity' => $line->getInputQuantity()->amount(),
+                'accepted_output_quantity' => $line->getAcceptedOutputQuantity()->amount(),
+                'loss_quantity' => $line->getLossQuantity()->amount(),
+            ];
+        }
+
+        return $lines;
+    }
+
     /** @return array<string, mixed> */
     private function serialize(ProductionOrder $order): array
     {
         $items = [];
         foreach ($order->getItems() as $item) {
+            $lost = Quantity::zero();
+            foreach ($order->getStageExecutions() as $execution) {
+                $line = $execution->getLineForItem($item);
+                if ($line !== null) {
+                    $lost = $lost->add($line->getLossQuantity());
+                }
+            }
+
             $items[] = [
                 'id' => $item->getId(),
                 'variant_id' => $item->getVariant()->getId(),
@@ -553,6 +849,7 @@ final class ProductionService
                 'variant_name' => $item->getVariant()->getName(),
                 'planned_quantity' => $item->getPlannedQuantity()->amount(),
                 'accepted_output_quantity' => $item->getAcceptedOutputQuantity()->amount(),
+                'loss_quantity' => $lost->amount(),
             ];
         }
 
@@ -573,6 +870,7 @@ final class ProductionService
                 'started_at' => $execution->getStartedAt()?->format(DATE_ATOM),
                 'completed_at' => $execution->getCompletedAt()?->format(DATE_ATOM),
                 'notes' => $execution->getNotes(),
+                'lines' => $this->serializeLines($execution),
             ];
         }
 

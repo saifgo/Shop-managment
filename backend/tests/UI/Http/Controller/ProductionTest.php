@@ -24,6 +24,95 @@ final class ProductionTest extends AuthenticatedApiTestCase
         self::assertSame('1.0000', $updated['stages'][0]['loss_quantity']);
     }
 
+    public function testProductionWithSeveralProductsTracksEachProductAndPostsStockPerProduct(): void
+    {
+        $admin = $this->login();
+        $token = $admin['access_token'];
+        $vaseId = $this->findVariantIdBySku($token, 'VAS-M');
+        $bowlId = $this->findVariantIdBySku($token, 'BWL-4');
+        $vaseStockBefore = $this->getStockForVariant($token, $vaseId)['physical_on_hand'];
+        $bowlStockBefore = $this->getStockForVariant($token, $bowlId)['physical_on_hand'];
+
+        $production = $this->postJson($token, '/api/productions', [
+            'items' => [
+                ['variant_id' => $vaseId, 'planned_quantity' => '6'],
+                ['variant_id' => $bowlId, 'planned_quantity' => '4'],
+            ],
+        ], 201);
+        self::assertSame(2, $production['item_count']);
+        self::assertSame('10.0000', $production['planned_quantity']);
+
+        $itemIds = array_column($production['items'], 'id', 'variant_id');
+        $this->startProduction($token, $production['id']);
+        $detail = $this->getProduction($token, $production['id']);
+
+        // Lose one vase in the first stage; everything else passes through.
+        $remaining = [$itemIds[$vaseId] => '6.0000', $itemIds[$bowlId] => '4.0000'];
+        foreach ($detail['stages'] as $index => $stage) {
+            $started = $this->postJson($token, '/api/productions/'.$production['id'].'/stages/'.$stage['id'].'/start', [], 200);
+            $lines = array_column($started['stages'][$index]['lines'], 'input_quantity', 'item_id');
+            $expected = $remaining;
+            ksort($expected);
+            ksort($lines);
+            self::assertSame($expected, $lines);
+
+            $results = [];
+            foreach ($remaining as $itemId => $input) {
+                $loss = $index === 0 && $itemId === $itemIds[$vaseId] ? '1.0000' : '0.0000';
+                $accepted = bcsub($input, $loss, 4);
+                $results[] = [
+                    'item_id' => $itemId,
+                    'accepted_output_quantity' => $accepted,
+                    'loss_quantity' => $loss,
+                    'losses' => $loss === '0.0000' ? [] : [['reason_code' => 'CRACKS', 'quantity' => $loss]],
+                ];
+                $remaining[$itemId] = $accepted;
+            }
+
+            $this->postJson($token, '/api/productions/'.$production['id'].'/stages/'.$stage['id'].'/complete', ['items' => $results], 200);
+        }
+
+        $completed = $this->getProduction($token, $production['id']);
+        self::assertSame('COMPLETED', $completed['status']);
+        $byVariant = array_column($completed['items'], null, 'variant_id');
+        self::assertSame('5.0000', $byVariant[$vaseId]['accepted_output_quantity']);
+        self::assertSame('1.0000', $byVariant[$vaseId]['loss_quantity']);
+        self::assertSame('4.0000', $byVariant[$bowlId]['accepted_output_quantity']);
+
+        self::assertSame(bcadd($vaseStockBefore, '5', 4), $this->getStockForVariant($token, $vaseId)['physical_on_hand']);
+        self::assertSame(bcadd($bowlStockBefore, '4', 4), $this->getStockForVariant($token, $bowlId)['physical_on_hand']);
+    }
+
+    public function testMultiProductStageRequiresResultsForEveryProduct(): void
+    {
+        $admin = $this->login();
+        $token = $admin['access_token'];
+        $vaseId = $this->findVariantIdBySku($token, 'VAS-M');
+        $bowlId = $this->findVariantIdBySku($token, 'BWL-4');
+
+        $production = $this->postJson($token, '/api/productions', [
+            'items' => [
+                ['variant_id' => $vaseId, 'planned_quantity' => '2'],
+                ['variant_id' => $bowlId, 'planned_quantity' => '3'],
+            ],
+        ], 201);
+        $this->startProduction($token, $production['id']);
+        $stageId = $this->getProduction($token, $production['id'])['stages'][0]['id'];
+        $this->postJson($token, '/api/productions/'.$production['id'].'/stages/'.$stageId.'/start', [], 200);
+
+        $vaseItemId = array_column($production['items'], 'id', 'variant_id')[$vaseId];
+        $this->postJson($token, '/api/productions/'.$production['id'].'/stages/'.$stageId.'/complete', [
+            'items' => [['item_id' => $vaseItemId, 'accepted_output_quantity' => '2', 'loss_quantity' => '0']],
+        ], 400);
+
+        $this->postJson($token, '/api/productions', [
+            'items' => [
+                ['variant_id' => $vaseId, 'planned_quantity' => '1'],
+                ['variant_id' => $vaseId, 'planned_quantity' => '2'],
+            ],
+        ], 400);
+    }
+
     public function testProductionListIncludesCreatedOrders(): void
     {
         $admin = $this->login();
@@ -182,6 +271,28 @@ final class ProductionTest extends AuthenticatedApiTestCase
             server: ['HTTP_AUTHORIZATION' => 'Bearer '.$token],
         );
         self::assertResponseIsSuccessful();
+
+        return json_decode($client->getResponse()->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     *
+     * @return array<string, mixed>
+     */
+    private function postJson(string $token, string $path, array $body, int $expectedStatus): array
+    {
+        $client = static::createClient();
+        $client->request(
+            'POST',
+            $path,
+            server: [
+                'HTTP_AUTHORIZATION' => 'Bearer '.$token,
+                'CONTENT_TYPE' => 'application/json',
+            ],
+            content: json_encode($body === [] ? new \stdClass() : $body, JSON_THROW_ON_ERROR),
+        );
+        self::assertResponseStatusCodeSame($expectedStatus, (string) $client->getResponse()->getContent());
 
         return json_decode($client->getResponse()->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
     }

@@ -59,6 +59,10 @@ class StageExecution
     #[ORM\OneToMany(mappedBy: 'stageExecution', targetEntity: ProductionLoss::class, cascade: ['persist'], orphanRemoval: true)]
     private Collection $losses;
 
+    /** @var Collection<int, StageExecutionLine> */
+    #[ORM\OneToMany(mappedBy: 'stageExecution', targetEntity: StageExecutionLine::class, cascade: ['persist'], orphanRemoval: true)]
+    private Collection $lines;
+
     public function __construct(
         EntityId $id,
         ProductionOrder $productionOrder,
@@ -70,6 +74,7 @@ class StageExecution
         $this->stageSequence = $productionStage->getSequence();
         $this->status = StageExecutionStatus::Pending;
         $this->losses = new ArrayCollection();
+        $this->lines = new ArrayCollection();
         $productionOrder->addStageExecution($this);
     }
 
@@ -139,29 +144,74 @@ class StageExecution
         return $this->losses;
     }
 
-    public function start(Quantity $inputQuantity, ?EntityId $performedBy = null): void
+    /** @return Collection<int, StageExecutionLine> */
+    public function getLines(): Collection
+    {
+        return $this->lines;
+    }
+
+    public function getLineForItem(ProductionItem $item): ?StageExecutionLine
+    {
+        foreach ($this->lines as $line) {
+            if ($line->getProductionItem()->getId() === $item->getId()) {
+                return $line;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Starts the stage with one input quantity per product of the order.
+     *
+     * @param list<array{item: ProductionItem, quantity: Quantity}> $inputs
+     */
+    public function start(array $inputs, ?EntityId $performedBy = null): void
     {
         if ($this->status !== StageExecutionStatus::Pending) {
             throw new \DomainException('Only pending stages can be started.');
         }
 
+        $total = Quantity::zero();
+        foreach ($inputs as $input) {
+            new StageExecutionLine(EntityId::generate(), $this, $input['item'], $input['quantity']);
+            $total = $total->add($input['quantity']);
+        }
+
         $this->status = StageExecutionStatus::InProgress;
-        $this->inputQuantity = $inputQuantity->amount();
+        $this->inputQuantity = $total->amount();
         $this->performedBy = $performedBy?->toString();
         $this->startedAt = new \DateTimeImmutable();
     }
 
-    public function complete(Quantity $acceptedOutput, Quantity $loss, ?string $notes = null): void
+    /**
+     * Completes the stage; accepted output and loss must already be recorded on every line.
+     */
+    public function complete(?string $notes = null): void
     {
         if ($this->status !== StageExecutionStatus::InProgress) {
             throw new \DomainException('Only in-progress stages can be completed.');
         }
 
-        $this->acceptedOutputQuantity = $acceptedOutput->amount();
+        $accepted = Quantity::zero();
+        $loss = Quantity::zero();
+        foreach ($this->lines as $line) {
+            $accepted = $accepted->add($line->getAcceptedOutputQuantity());
+            $loss = $loss->add($line->getLossQuantity());
+        }
+
+        $this->acceptedOutputQuantity = $accepted->amount();
         $this->lossQuantity = $loss->amount();
         $this->notes = $notes;
         $this->status = StageExecutionStatus::Completed;
         $this->completedAt = new \DateTimeImmutable();
+    }
+
+    public function addLine(StageExecutionLine $line): void
+    {
+        if (!$this->lines->contains($line)) {
+            $this->lines->add($line);
+        }
     }
 
     public function addLoss(ProductionLoss $loss): void
