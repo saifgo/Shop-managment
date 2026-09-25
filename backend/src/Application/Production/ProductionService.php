@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Production;
 
+use App\Application\Audit\AuditRecorder;
 use App\Application\Inventory\AvailabilityService;
 use App\Application\Inventory\BackorderAllocationService;
 use App\Application\Inventory\StockLedgerService;
@@ -20,20 +21,28 @@ use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Production\ProductionItem;
 use App\Infrastructure\Persistence\Entity\Production\ProductionLoss;
-use App\Infrastructure\Persistence\Entity\Production\ProductionLossReason;
 use App\Infrastructure\Persistence\Entity\Production\ProductionOrder;
-use App\Infrastructure\Persistence\Entity\Production\ProductionStage;
 use App\Infrastructure\Persistence\Entity\Production\StageExecution;
 use App\Infrastructure\Persistence\Entity\Production\StageExecutionLine;
 use App\Infrastructure\Persistence\UnitOfWork;
+use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
- * A production order makes one or more products (production items). All products move through
- * the configured stages together; each stage records input / accepted output / loss per product.
+ * Production workflow (blueprint §8, §19.2).
+ *
+ * A production order makes one or more products (production items). Lifecycle:
+ * DRAFT -> PLANNED -> IN_PROGRESS <-> PAUSED -> COMPLETED, or CANCELLED before completion.
+ *
+ * Starting an order creates one stage execution per active configured stage. All products move
+ * through the stages together and strictly in sequence; each stage records input, accepted output
+ * and loss per product, and every loss carries a configured reason. When the last stage completes,
+ * each product's accepted output is received into stock and allocated to waiting backorders.
+ *
+ * Every command runs in one transaction with the order row locked, and leaves an audit event.
  */
 final class ProductionService
 {
@@ -44,6 +53,8 @@ final class ProductionService
         private StockLedgerService $stockLedgerService,
         private BackorderAllocationService $backorderAllocationService,
         private AvailabilityService $availabilityService,
+        private ProductionConfigService $configService,
+        private AuditRecorder $auditRecorder,
         private UnitOfWork $unitOfWork,
     ) {
     }
@@ -106,57 +117,84 @@ final class ProductionService
             }
 
             $this->entityManager->persist($order);
+            $this->audit($user, $order, 'production.created', [
+                'status' => $order->getStatus()->value,
+                'items' => array_map(static fn (array $line): array => [
+                    'variant_id' => $line['variant']->getId(),
+                    'sku' => $line['variant']->getSku(),
+                    'planned_quantity' => $line['quantity']->amount(),
+                ], $lines),
+            ]);
 
             return $this->serialize($order);
         });
     }
 
-    /** @return array<string, mixed> */
+    /** DRAFT -> PLANNED: commits the quantities to manufacturing (they count as "already in production"). */
+    public function plan(User $user, string $productionId): array
+    {
+        return $this->transition($user, $productionId, ProductionStatus::Planned, 'production.planned');
+    }
+
+    /** DRAFT/PLANNED -> IN_PROGRESS; creates one stage execution per active configured stage. A paused order resumes. */
     public function start(User $user, string $productionId): array
     {
         return $this->unitOfWork->transactional(function () use ($user, $productionId): array {
-            $order = $this->findProduction($user, $productionId);
+            $order = $this->findProduction($user, $productionId, lock: true);
+
+            if ($order->getStatus() === ProductionStatus::Paused) {
+                return $this->doTransition($user, $order, ProductionStatus::InProgress, 'production.resumed');
+            }
+
             $this->stateMachine->assertTransition($order->getStatus(), ProductionStatus::InProgress);
+            $this->ensureStageExecutions($order);
             $order->transitionTo(ProductionStatus::InProgress);
-            $this->ensureStageExecutions($order, $user->companyId());
+            $this->audit($user, $order, 'production.started', [
+                'stages' => array_map(
+                    static fn (StageExecution $execution): string => $execution->getProductionStage()->getName(),
+                    $order->getStageExecutions()->toArray(),
+                ),
+            ]);
 
             return $this->serialize($order);
         });
     }
 
-    /** @return array<string, mixed> */
+    /** PAUSED -> IN_PROGRESS. */
+    public function resume(User $user, string $productionId): array
+    {
+        return $this->transition($user, $productionId, ProductionStatus::InProgress, 'production.resumed', requireFrom: ProductionStatus::Paused);
+    }
+
+    /** IN_PROGRESS -> PAUSED: no stage can be started or completed until the order is resumed. */
     public function pause(User $user, string $productionId): array
     {
-        return $this->unitOfWork->transactional(function () use ($user, $productionId): array {
-            $order = $this->findProduction($user, $productionId);
-            $this->stateMachine->assertTransition($order->getStatus(), ProductionStatus::Paused);
-            $order->transitionTo(ProductionStatus::Paused);
-
-            return $this->serialize($order);
-        });
+        return $this->transition($user, $productionId, ProductionStatus::Paused, 'production.paused');
     }
 
     /** @return array<string, mixed> */
     public function cancel(User $user, string $productionId, ?string $reason = null): array
     {
         return $this->unitOfWork->transactional(function () use ($user, $productionId, $reason): array {
-            $order = $this->findProduction($user, $productionId);
+            $order = $this->findProduction($user, $productionId, lock: true);
 
             if (in_array($order->getStatus(), [ProductionStatus::Completed, ProductionStatus::Cancelled], true)) {
                 throw new BadRequestHttpException('Production cannot be cancelled.');
             }
 
-            $this->stateMachine->assertTransition($order->getStatus(), ProductionStatus::Cancelled);
-            $order->transitionTo(ProductionStatus::Cancelled);
+            $reason = $reason !== null && trim($reason) !== '' ? trim($reason) : null;
 
-            return $this->serialize($order);
+            return $this->doTransition($user, $order, ProductionStatus::Cancelled, 'production.cancelled', [
+                'reason' => $reason,
+                'in_process' => $this->inProcessSnapshot($order),
+            ]);
         });
     }
 
     /**
-     * Inputs default to the planned quantity (first stage) or the previous stage's accepted
-     * output, per product. `items` overrides individual products; `input_quantity` is the
-     * legacy single-product override.
+     * Starts the next stage. Inputs default to the planned quantity (first stage) or the previous
+     * stage's accepted output, per product. `items` overrides individual products; `input_quantity`
+     * is the single-product override.
      *
      * @param array{
      *     input_quantity?: string|null,
@@ -168,20 +206,23 @@ final class ProductionService
     public function startStage(User $user, string $productionId, string $stageId, array $payload): array
     {
         return $this->unitOfWork->transactional(function () use ($user, $productionId, $stageId, $payload): array {
-            $order = $this->findProduction($user, $productionId);
-
-            if (!in_array($order->getStatus(), [ProductionStatus::InProgress, ProductionStatus::Paused], true)) {
-                throw new BadRequestHttpException('Production must be in progress to start a stage.');
-            }
-
-            if ($order->getStatus() === ProductionStatus::Paused) {
-                $order->transitionTo(ProductionStatus::InProgress);
-            }
-
+            $order = $this->findProduction($user, $productionId, lock: true);
+            $this->assertWorkable($order);
             $execution = $this->findStageExecution($order, $stageId);
 
             if ($execution->getStatus() !== StageExecutionStatus::Pending) {
-                throw new BadRequestHttpException('Only pending stages can be started.');
+                throw new BadRequestHttpException(sprintf('%s has already been started.', $execution->getProductionStage()->getName()));
+            }
+
+            foreach ($order->getStageExecutions() as $other) {
+                if ($other->getStatus() === StageExecutionStatus::InProgress) {
+                    throw new BadRequestHttpException(sprintf('Complete %s before starting the next stage.', $other->getProductionStage()->getName()));
+                }
+            }
+
+            $previous = $this->previousStageExecution($order, $execution);
+            if ($previous !== null && $previous->getStatus() !== StageExecutionStatus::Completed) {
+                throw new BadRequestHttpException(sprintf('Complete %s first: stages run in order.', $previous->getProductionStage()->getName()));
             }
 
             $overrides = $this->resolveInputOverrides($order, $payload);
@@ -189,7 +230,19 @@ final class ProductionService
             $total = Quantity::zero();
 
             foreach ($order->getItems() as $item) {
-                $quantity = $overrides[$item->getId()] ?? $this->defaultStageInput($order, $execution, $item);
+                $available = $this->defaultStageInput($order, $previous, $item);
+                $quantity = $overrides[$item->getId()] ?? $available;
+
+                // Later stages can only work with what the previous stage accepted.
+                if ($previous !== null && $quantity->isGreaterThan($available)) {
+                    throw new BadRequestHttpException(sprintf(
+                        '%s: only %s came out of %s.',
+                        $item->getVariant()->getSku(),
+                        $available->amount(),
+                        $previous->getProductionStage()->getName(),
+                    ));
+                }
+
                 $inputs[] = ['item' => $item, 'quantity' => $quantity];
                 $total = $total->add($quantity);
             }
@@ -199,12 +252,23 @@ final class ProductionService
             }
 
             $execution->start($inputs, EntityId::fromString($user->getId()));
+            $this->audit($user, $order, 'production.stage.started', [
+                'stage' => $execution->getProductionStage()->getName(),
+                'inputs' => array_map(static fn (array $input): array => [
+                    'sku' => $input['item']->getVariant()->getSku(),
+                    'input_quantity' => $input['quantity']->amount(),
+                ], $inputs),
+            ]);
 
             return $this->serialize($order);
         });
     }
 
     /**
+     * Records the outcome of the running stage for every product and closes it. Quantities must
+     * reconcile per the stage's mode, and every loss needs a configured reason. Completing the last
+     * stage completes the production and receives the output into stock.
+     *
      * @param array{
      *     items?: list<array{
      *         item_id?: string|null,
@@ -223,40 +287,67 @@ final class ProductionService
     public function completeStage(User $user, string $productionId, string $stageId, array $payload): array
     {
         return $this->unitOfWork->transactional(function () use ($user, $productionId, $stageId, $payload): array {
-            $order = $this->findProduction($user, $productionId);
+            $order = $this->findProduction($user, $productionId, lock: true);
+            $this->assertWorkable($order);
             $execution = $this->findStageExecution($order, $stageId);
+            $stage = $execution->getProductionStage();
 
             if ($execution->getStatus() !== StageExecutionStatus::InProgress) {
-                throw new BadRequestHttpException('Only in-progress stages can be completed.');
+                throw new BadRequestHttpException(sprintf('%s is not running.', $stage->getName()));
             }
 
-            $mode = $execution->getProductionStage()->getReconciliationMode();
-            $results = $this->resolveCompletionResults($execution, $payload);
+            // Stages that do not record quantities pass everything through unchanged.
+            $results = $stage->canRecordQuantity() ? $this->resolveCompletionResults($execution, $payload) : null;
+            $recorded = [];
 
             foreach ($execution->getLines() as $line) {
                 $item = $line->getProductionItem();
+                $sku = $item->getVariant()->getSku();
+
+                if ($results === null) {
+                    $line->record($line->getInputQuantity(), Quantity::zero());
+                    continue;
+                }
+
                 $result = $results[$item->getId()];
                 $accepted = $this->parseQuantity($result['accepted_output_quantity'] ?? null, 'accepted_output_quantity');
                 $loss = $this->parseQuantity($result['loss_quantity'] ?? null, 'loss_quantity', allowEmpty: true);
-                $label = $item->getVariant()->getSku();
+
+                if (!$loss->isZero() && !$stage->canRecordLoss()) {
+                    throw new BadRequestHttpException(sprintf('%s does not record losses.', $stage->getName()));
+                }
 
                 if ($line->getInputQuantity()->isZero()) {
                     if (!$accepted->isZero() || !$loss->isZero()) {
-                        throw new BadRequestHttpException(sprintf('%s: nothing entered this stage, so accepted output and loss must be 0.', $label));
+                        throw new BadRequestHttpException(sprintf('%s: nothing entered this stage, so accepted output and loss must be 0.', $sku));
                     }
                 } else {
                     try {
-                        $this->quantityReconciler->reconcile($line->getInputQuantity(), $accepted, $loss, $mode);
+                        $this->quantityReconciler->reconcile($line->getInputQuantity(), $accepted, $loss, $stage->getReconciliationMode());
                     } catch (\DomainException $exception) {
-                        throw new BadRequestHttpException(sprintf('%s: %s', $label, $exception->getMessage()), $exception);
+                        throw new BadRequestHttpException(sprintf('%s: %s', $sku, $exception->getMessage()), $exception);
                     }
                 }
 
-                $this->recordLosses($user, $execution, $item, $loss, $result['losses'] ?? null);
+                $losses = $this->recordLosses($user, $execution, $item, $loss, $result['losses'] ?? null);
                 $line->record($accepted, $loss);
+                $recorded[] = [
+                    'sku' => $sku,
+                    'input_quantity' => $line->getInputQuantity()->amount(),
+                    'accepted_output_quantity' => $accepted->amount(),
+                    'loss_quantity' => $loss->amount(),
+                    'losses' => $losses,
+                ];
             }
 
-            $execution->complete($payload['notes'] ?? null);
+            $notes = isset($payload['notes']) && trim($payload['notes']) !== '' ? trim($payload['notes']) : null;
+            $execution->complete($notes);
+            $this->audit($user, $order, 'production.stage.completed', [
+                'stage' => $stage->getName(),
+                'pass_through' => $results === null,
+                'lines' => $recorded,
+                'notes' => $notes,
+            ]);
 
             if ($order->allStagesCompleted()) {
                 $this->completeProduction($order, $user);
@@ -338,28 +429,68 @@ final class ProductionService
         foreach ($order->getStageExecutions() as $execution) {
             $events[] = [
                 'type' => 'stage_execution',
-                'stage_id' => $execution->getProductionStage()->getId(),
-                'stage_name' => $execution->getProductionStage()->getName(),
-                'stage_sequence' => $execution->getStageSequence(),
-                'status' => $execution->getStatus()->value,
-                'input_quantity' => $execution->getInputQuantity()->amount(),
-                'accepted_output_quantity' => $execution->getAcceptedOutputQuantity()->amount(),
-                'loss_quantity' => $execution->getLossQuantity()->amount(),
-                'started_at' => $execution->getStartedAt()?->format(DATE_ATOM),
-                'completed_at' => $execution->getCompletedAt()?->format(DATE_ATOM),
-                'notes' => $execution->getNotes(),
-                'lines' => $this->serializeLines($execution),
-                'losses' => array_map(static fn (ProductionLoss $loss): array => [
-                    'id' => $loss->getId(),
-                    'item_id' => $loss->getProductionItem()?->getId(),
-                    'reason_code' => $loss->getReasonCode(),
-                    'quantity' => $loss->getQuantity()->amount(),
-                    'notes' => $loss->getNotes(),
-                ], $execution->getLosses()->toArray()),
+                ...$this->serializeStageExecution($execution),
+                'losses' => array_map($this->serializeLoss(...), $execution->getLosses()->toArray()),
             ];
         }
 
         return ['items' => $events];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function transition(
+        User $user,
+        string $productionId,
+        ProductionStatus $to,
+        string $action,
+        ?ProductionStatus $requireFrom = null,
+    ): array {
+        return $this->unitOfWork->transactional(function () use ($user, $productionId, $to, $action, $requireFrom): array {
+            $order = $this->findProduction($user, $productionId, lock: true);
+
+            if ($requireFrom !== null && $order->getStatus() !== $requireFrom) {
+                throw new BadRequestHttpException(sprintf('Only %s productions can do this.', strtolower($requireFrom->value)));
+            }
+
+            return $this->doTransition($user, $order, $to, $action);
+        });
+    }
+
+    /**
+     * @param array<string, mixed> $details
+     *
+     * @return array<string, mixed>
+     */
+    private function doTransition(User $user, ProductionOrder $order, ProductionStatus $to, string $action, array $details = []): array
+    {
+        $from = $order->getStatus();
+
+        try {
+            $this->stateMachine->assertTransition($from, $to);
+        } catch (\DomainException) {
+            throw new BadRequestHttpException(sprintf(
+                'A %s production cannot become %s.',
+                strtolower(str_replace('_', ' ', $from->value)),
+                strtolower(str_replace('_', ' ', $to->value)),
+            ));
+        }
+
+        $order->transitionTo($to);
+        $this->audit($user, $order, $action, ['from' => $from->value, 'to' => $to->value, ...$details]);
+
+        return $this->serialize($order);
+    }
+
+    private function assertWorkable(ProductionOrder $order): void
+    {
+        match ($order->getStatus()) {
+            ProductionStatus::InProgress => null,
+            ProductionStatus::Paused => throw new BadRequestHttpException('Production is paused. Resume it before working on stages.'),
+            ProductionStatus::Draft, ProductionStatus::Planned => throw new BadRequestHttpException('Start the production before working on stages.'),
+            default => throw new BadRequestHttpException(sprintf('Production is %s.', strtolower($order->getStatus()->value))),
+        };
     }
 
     /**
@@ -493,55 +624,76 @@ final class ProductionService
     }
 
     /**
+     * Every lost unit must be explained by a configured loss reason (blueprint §8.3, §30).
+     *
      * @param list<array{loss_reason_id?: string|null, reason_code?: string|null, quantity: string, notes?: string|null}>|null $losses
+     *
+     * @return list<array{reason_code: string, quantity: string}>
      */
-    private function recordLosses(User $user, StageExecution $execution, ProductionItem $item, Quantity $loss, ?array $losses): void
+    private function recordLosses(User $user, StageExecution $execution, ProductionItem $item, Quantity $loss, ?array $losses): array
     {
-        if ($losses === null || $losses === []) {
-            return;
+        $sku = $item->getVariant()->getSku();
+        $losses ??= [];
+
+        if ($loss->isZero() && $losses === []) {
+            return [];
+        }
+
+        if ($losses === []) {
+            throw new BadRequestHttpException(sprintf('%s: choose a reason for the %s lost.', $sku, $loss->amount()));
         }
 
         $lossTotal = Quantity::zero();
+        $recorded = [];
         foreach ($losses as $lossEntry) {
-            $lossQty = $this->parseQuantity((string) ($lossEntry['quantity'] ?? ''), 'losses.quantity');
+            $lossQty = $this->parsePositiveQuantity((string) ($lossEntry['quantity'] ?? ''), $sku.' loss quantity');
             $lossTotal = $lossTotal->add($lossQty);
-            $reason = isset($lossEntry['loss_reason_id']) && $lossEntry['loss_reason_id'] !== ''
-                ? $this->findLossReason($user, $lossEntry['loss_reason_id'])
-                : null;
+            $reason = $this->configService->requireActiveLossReason(
+                $user->companyId(),
+                $lossEntry['loss_reason_id'] ?? null,
+                $lossEntry['reason_code'] ?? null,
+            );
+            $notes = isset($lossEntry['notes']) && trim((string) $lossEntry['notes']) !== '' ? trim((string) $lossEntry['notes']) : null;
 
             $this->entityManager->persist(new ProductionLoss(
                 EntityId::generate(),
                 $execution,
                 $lossQty,
                 $reason,
-                $lossEntry['reason_code'] ?? null,
-                $lossEntry['notes'] ?? null,
+                $reason->getCode(),
+                $notes,
                 EntityId::fromString($user->getId()),
                 $item,
             ));
+            $recorded[] = ['reason_code' => $reason->getCode(), 'quantity' => $lossQty->amount()];
         }
 
         if (!$lossTotal->equals($loss)) {
             throw new BadRequestHttpException(sprintf(
-                '%s: loss line items must sum to loss_quantity.',
-                $item->getVariant()->getSku(),
+                '%s: the loss reasons add up to %s but the loss is %s.',
+                $sku,
+                $lossTotal->amount(),
+                $loss->amount(),
             ));
         }
+
+        return $recorded;
     }
 
     private function completeProduction(ProductionOrder $order, User $user): void
     {
-        $location = $this->availabilityService->resolveDefaultLocation($order->companyId());
-
-        if ($location === null) {
-            throw new \DomainException('No stock location configured.');
-        }
-
+        $location = $this->availabilityService->requireDefaultLocation($order->companyId());
         $lastStage = $order->getLastCompletedStageExecution();
+        $receipts = [];
 
         foreach ($order->getItems() as $item) {
             $accepted = $lastStage?->getLineForItem($item)?->getAcceptedOutputQuantity() ?? Quantity::zero();
             $item->setAcceptedOutputQuantity($accepted);
+            $receipts[] = [
+                'sku' => $item->getVariant()->getSku(),
+                'planned_quantity' => $item->getPlannedQuantity()->amount(),
+                'accepted_output_quantity' => $accepted->amount(),
+            ];
 
             if ($accepted->isZero()) {
                 continue;
@@ -570,24 +722,22 @@ final class ProductionService
             );
         }
 
-        $this->stateMachine->assertTransition($order->getStatus(), ProductionStatus::Completed);
-        $order->transitionTo(ProductionStatus::Completed);
+        $this->doTransition($user, $order, ProductionStatus::Completed, 'production.completed', [
+            'location' => $location->getCode(),
+            'receipts' => $receipts,
+        ]);
     }
 
-    private function ensureStageExecutions(ProductionOrder $order, EntityId $companyId): void
+    private function ensureStageExecutions(ProductionOrder $order): void
     {
         if (!$order->getStageExecutions()->isEmpty()) {
             return;
         }
 
-        /** @var list<ProductionStage> $stages */
-        $stages = $this->entityManager->getRepository(ProductionStage::class)->findBy(
-            ['companyId' => $companyId->toString(), 'isActive' => true],
-            ['sequence' => 'ASC'],
-        );
+        $stages = $this->configService->activeStages($order->companyId());
 
         if ($stages === []) {
-            throw new BadRequestHttpException('No production stages configured.');
+            throw new BadRequestHttpException('Every production stage is deactivated. Activate at least one in the production workflow settings.');
         }
 
         foreach ($stages as $stage) {
@@ -599,16 +749,10 @@ final class ProductionService
         }
     }
 
-    private function defaultStageInput(ProductionOrder $order, StageExecution $execution, ProductionItem $item): Quantity
+    private function defaultStageInput(ProductionOrder $order, ?StageExecution $previous, ProductionItem $item): Quantity
     {
-        $previous = $this->previousStageExecution($order, $execution);
-
         if ($previous === null) {
             return $item->getPlannedQuantity();
-        }
-
-        if ($previous->getStatus() !== StageExecutionStatus::Completed) {
-            throw new BadRequestHttpException('Previous stage must be completed first.');
         }
 
         $line = $previous->getLineForItem($item);
@@ -638,13 +782,27 @@ final class ProductionService
         return $previous;
     }
 
-    private function findProduction(User $user, string $productionId): ProductionOrder
+    /**
+     * @param bool $lock take a row lock for the rest of the transaction, so two people acting on
+     *                   the same order are serialized
+     */
+    private function findProduction(User $user, string $productionId, bool $lock = false): ProductionOrder
     {
+        $query = $this->entityManager->createQueryBuilder()
+            ->select('p')
+            ->from(ProductionOrder::class, 'p')
+            ->where('p.id = :id')
+            ->andWhere('p.companyId = :companyId')
+            ->setParameter('id', $productionId)
+            ->setParameter('companyId', $user->companyId()->toString())
+            ->getQuery();
+
+        if ($lock) {
+            $query->setLockMode(LockMode::PESSIMISTIC_WRITE);
+        }
+
         /** @var ProductionOrder|null $order */
-        $order = $this->entityManager->getRepository(ProductionOrder::class)->findOneBy([
-            'id' => $productionId,
-            'companyId' => $user->companyId()->toString(),
-        ]);
+        $order = $query->getOneOrNullResult();
 
         if ($order === null) {
             throw new NotFoundHttpException('Production order not found.');
@@ -688,21 +846,6 @@ final class ProductionService
         }
 
         return $variant;
-    }
-
-    private function findLossReason(User $user, string $reasonId): ProductionLossReason
-    {
-        /** @var ProductionLossReason|null $reason */
-        $reason = $this->entityManager->getRepository(ProductionLossReason::class)->findOneBy([
-            'id' => $reasonId,
-            'companyId' => $user->companyId()->toString(),
-        ]);
-
-        if ($reason === null) {
-            throw new NotFoundHttpException('Loss reason not found.');
-        }
-
-        return $reason;
     }
 
     private function parseQuantity(?string $amount, string $field, bool $allowEmpty = false): Quantity
@@ -766,6 +909,31 @@ final class ProductionService
         return sprintf('%s%05d', $prefix, $count + 1);
     }
 
+    /** @param array<string, mixed> $payload */
+    private function audit(User $user, ProductionOrder $order, string $action, array $payload): void
+    {
+        $this->auditRecorder->record(
+            action: $action,
+            payload: ['reference' => $order->getReference(), ...$payload],
+            companyId: $user->companyId(),
+            actorUserId: EntityId::fromString($user->getId()),
+            entityType: 'production_order',
+            entityId: EntityId::fromString($order->getId()),
+            flush: false,
+        );
+    }
+
+    /** @return list<array{sku: string, quantity: string}> */
+    private function inProcessSnapshot(ProductionOrder $order): array
+    {
+        $snapshot = [];
+        foreach ($order->getItems() as $item) {
+            $snapshot[] = ['sku' => $item->getVariant()->getSku(), 'quantity' => $order->currentQuantityFor($item)->amount()];
+        }
+
+        return $snapshot;
+    }
+
     /** @return array<string, mixed> */
     private function serializeSummary(ProductionOrder $order): array
     {
@@ -805,16 +973,35 @@ final class ProductionService
         ];
     }
 
-    /** @return list<array<string, mixed>> */
-    private function serializeLines(StageExecution $execution): array
+    /** @return array<string, mixed> */
+    private function serializeLoss(ProductionLoss $loss): array
     {
-        $lines = [];
+        return [
+            'id' => $loss->getId(),
+            'item_id' => $loss->getProductionItem()?->getId(),
+            'reason_code' => $loss->getReasonCode(),
+            'reason_label' => $loss->getLossReason()?->getLabel() ?? $loss->getReasonCode(),
+            'quantity' => $loss->getQuantity()->amount(),
+            'notes' => $loss->getNotes(),
+        ];
+    }
 
+    /** @return array<string, mixed> */
+    private function serializeStageExecution(StageExecution $execution): array
+    {
+        $stage = $execution->getProductionStage();
+        $lossesByItem = [];
+        foreach ($execution->getLosses() as $loss) {
+            $lossesByItem[$loss->getProductionItem()?->getId() ?? ''][] = $this->serializeLoss($loss);
+        }
+
+        $lines = [];
         foreach ($execution->getLines() as $line) {
-            $variant = $line->getProductionItem()->getVariant();
+            $item = $line->getProductionItem();
+            $variant = $item->getVariant();
             $lines[] = [
                 'id' => $line->getId(),
-                'item_id' => $line->getProductionItem()->getId(),
+                'item_id' => $item->getId(),
                 'variant_id' => $variant->getId(),
                 'sku' => $variant->getSku(),
                 'product_name' => $variant->getProduct()->getName(),
@@ -822,16 +1009,57 @@ final class ProductionService
                 'input_quantity' => $line->getInputQuantity()->amount(),
                 'accepted_output_quantity' => $line->getAcceptedOutputQuantity()->amount(),
                 'loss_quantity' => $line->getLossQuantity()->amount(),
+                'losses' => $lossesByItem[$item->getId()] ?? [],
             ];
         }
 
-        return $lines;
+        return [
+            'id' => $stage->getId(),
+            'execution_id' => $execution->getId(),
+            'sequence' => $execution->getStageSequence(),
+            'name' => $stage->getName(),
+            'status' => $execution->getStatus()->value,
+            'reconciliation_mode' => $stage->getReconciliationMode()->value,
+            'can_record_quantity' => $stage->canRecordQuantity(),
+            'can_record_loss' => $stage->canRecordLoss(),
+            'input_quantity' => $execution->getInputQuantity()->amount(),
+            'accepted_output_quantity' => $execution->getAcceptedOutputQuantity()->amount(),
+            'loss_quantity' => $execution->getLossQuantity()->amount(),
+            'performed_by' => $execution->getPerformedBy(),
+            'performed_by_name' => $this->userName($execution->getPerformedBy()),
+            'started_at' => $execution->getStartedAt()?->format(DATE_ATOM),
+            'completed_at' => $execution->getCompletedAt()?->format(DATE_ATOM),
+            'notes' => $execution->getNotes(),
+            'lines' => $lines,
+        ];
+    }
+
+    /** @var array<string, string|null> */
+    private array $userNames = [];
+
+    private function userName(?string $userId): ?string
+    {
+        if ($userId === null) {
+            return null;
+        }
+
+        if (!array_key_exists($userId, $this->userNames)) {
+            $user = $this->entityManager->find(User::class, $userId);
+            $this->userNames[$userId] = $user instanceof User
+                ? trim($user->getFirstName().' '.$user->getLastName())
+                : null;
+        }
+
+        return $this->userNames[$userId];
     }
 
     /** @return array<string, mixed> */
     private function serialize(ProductionOrder $order): array
     {
+        $status = $order->getStatus();
+        $active = in_array($status, [ProductionStatus::Planned, ProductionStatus::InProgress, ProductionStatus::Paused], true);
         $items = [];
+
         foreach ($order->getItems() as $item) {
             $lost = Quantity::zero();
             foreach ($order->getStageExecutions() as $execution) {
@@ -848,29 +1076,9 @@ final class ProductionService
                 'product_name' => $item->getVariant()->getProduct()->getName(),
                 'variant_name' => $item->getVariant()->getName(),
                 'planned_quantity' => $item->getPlannedQuantity()->amount(),
-                'accepted_output_quantity' => $item->getAcceptedOutputQuantity()->amount(),
+                'in_process_quantity' => $active ? $order->currentQuantityFor($item)->amount() : '0.0000',
                 'loss_quantity' => $lost->amount(),
-            ];
-        }
-
-        $stages = [];
-        foreach ($order->getStageExecutions() as $execution) {
-            $stages[] = [
-                'id' => $execution->getProductionStage()->getId(),
-                'execution_id' => $execution->getId(),
-                'sequence' => $execution->getStageSequence(),
-                'name' => $execution->getProductionStage()->getName(),
-                'status' => $execution->getStatus()->value,
-                'reconciliation_mode' => $execution->getProductionStage()->getReconciliationMode()->value,
-                'can_record_quantity' => $execution->getProductionStage()->canRecordQuantity(),
-                'can_record_loss' => $execution->getProductionStage()->canRecordLoss(),
-                'input_quantity' => $execution->getInputQuantity()->amount(),
-                'accepted_output_quantity' => $execution->getAcceptedOutputQuantity()->amount(),
-                'loss_quantity' => $execution->getLossQuantity()->amount(),
-                'started_at' => $execution->getStartedAt()?->format(DATE_ATOM),
-                'completed_at' => $execution->getCompletedAt()?->format(DATE_ATOM),
-                'notes' => $execution->getNotes(),
-                'lines' => $this->serializeLines($execution),
+                'accepted_output_quantity' => $item->getAcceptedOutputQuantity()->amount(),
             ];
         }
 
@@ -884,10 +1092,12 @@ final class ProductionService
             'completed_at' => $order->getCompletedAt()?->format(DATE_ATOM),
             'cancelled_at' => $order->getCancelledAt()?->format(DATE_ATOM),
             'items' => $items,
-            'stages' => $stages,
-            'can_start' => in_array($order->getStatus(), [ProductionStatus::Draft, ProductionStatus::Planned], true),
-            'can_pause' => $order->getStatus() === ProductionStatus::InProgress,
-            'can_cancel' => !in_array($order->getStatus(), [ProductionStatus::Completed, ProductionStatus::Cancelled], true),
+            'stages' => array_map($this->serializeStageExecution(...), $order->getStageExecutions()->toArray()),
+            'can_plan' => $status === ProductionStatus::Draft,
+            'can_start' => in_array($status, [ProductionStatus::Draft, ProductionStatus::Planned], true),
+            'can_pause' => $status === ProductionStatus::InProgress,
+            'can_resume' => $status === ProductionStatus::Paused,
+            'can_cancel' => !in_array($status, [ProductionStatus::Completed, ProductionStatus::Cancelled], true),
         ];
     }
 }

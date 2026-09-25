@@ -291,6 +291,29 @@ class ProductionOrder implements CompanyScoped
         return $last;
     }
 
+    /**
+     * Units of a product still moving through the workflow: the planned quantity before the first
+     * stage, then what entered the running stage or what the last completed stage accepted.
+     */
+    public function currentQuantityFor(ProductionItem $item): \App\Domain\Shared\Quantity
+    {
+        $current = $item->getPlannedQuantity();
+
+        foreach ($this->stageExecutions as $execution) {
+            $line = $execution->getLineForItem($item);
+
+            if ($line === null) {
+                continue;
+            }
+
+            $current = $execution->getStatus() === \App\Domain\Production\StageExecutionStatus::Completed
+                ? $line->getAcceptedOutputQuantity()
+                : $line->getInputQuantity();
+        }
+
+        return $current;
+    }
+
     public function allStagesCompleted(): bool
     {
         if ($this->stageExecutions->isEmpty()) {

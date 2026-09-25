@@ -7,6 +7,7 @@ export const PERMISSIONS = {
   inventoryAdjust: 'inventory.adjust',
   productionView: 'production.view',
   productionManage: 'production.manage',
+  productionStageExecute: 'production.stage.execute',
   customersView: 'customers.view',
   customersManage: 'customers.manage',
   portalOrdersView: 'portal.orders.view',

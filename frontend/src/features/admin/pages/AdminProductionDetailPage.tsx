@@ -1,39 +1,57 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { PauseIcon, PlayIcon } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { toast } from 'sonner'
-import { ConfirmAction } from '@/components/ConfirmAction'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
 import { StatusBadge } from '@/components/StatusBadge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { productionApi, type ProductionDetail, type ProductionStage } from '@/lib/api/production'
-import { formatQuantity } from '@/lib/format'
+import { useAuth } from '@/features/auth/hooks/useAuth'
+import {
+  LOSS_REASONS_QUERY_KEY,
+  productionApi,
+  productionConfigApi,
+  type ProductionDetail,
+  type ProductionLossReason,
+  type ProductionStage,
+} from '@/lib/api/production'
+import { PERMISSIONS } from '@/lib/auth/permissions'
+import { formatDateTime, formatQuantity } from '@/lib/format'
 import { DECIMAL, fromUnits, toUnits } from '@/lib/quantity'
 
-const LOSS_REASONS = [
-  { value: 'BROKEN', label: 'Broken / unusable' },
-  { value: 'CRACKS', label: 'Cracks' },
-  { value: 'KILN_DAMAGE', label: 'Kiln damage' },
-  { value: 'DECORATION_REJECT', label: 'Decoration reject' },
-  { value: 'FIRING_DAMAGE', label: 'Firing damage' },
-  { value: 'QUALITY_REJECT', label: 'Quality reject' },
-  { value: 'OTHER', label: 'Other' },
-]
+const MODE_HINT: Record<string, string> = {
+  STRICT: 'Accepted + loss must equal what went in.',
+  FLEXIBLE: 'Accepted + loss may be less than what went in.',
+  CONVERSION: 'Output is counted in its own unit.',
+}
 
 export function AdminProductionDetailPage() {
   const { id = '' } = useParams()
   const queryClient = useQueryClient()
+  const { can } = useAuth()
+  const canManage = can(PERMISSIONS.productionManage)
+  const canExecute = can(PERMISSIONS.productionStageExecute)
   const [activeStageId, setActiveStageId] = useState<string | null>(null)
   const [breakdownStageId, setBreakdownStageId] = useState<string | null>(null)
+  const [cancelOpen, setCancelOpen] = useState(false)
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin', 'production', id],
@@ -41,15 +59,24 @@ export function AdminProductionDetailPage() {
     enabled: Boolean(id),
   })
 
+  const lossReasons = useQuery({
+    queryKey: LOSS_REASONS_QUERY_KEY,
+    queryFn: () => productionConfigApi.listLossReasons(),
+    enabled: canExecute,
+  })
+
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['admin', 'production', id] })
     void queryClient.invalidateQueries({ queryKey: ['admin', 'productions'] })
+    void queryClient.invalidateQueries({ queryKey: ['admin', 'production-demand'] })
   }
   const onError = (err: Error) => toast.error(err.message)
 
-  const startMutation = useMutation({ mutationFn: () => productionApi.start(id), onSuccess: invalidate, onError })
-  const pauseMutation = useMutation({ mutationFn: () => productionApi.pause(id), onSuccess: invalidate, onError })
-  const cancelMutation = useMutation({ mutationFn: () => productionApi.cancel(id), onSuccess: invalidate, onError })
+  const lifecycle = useMutation({
+    mutationFn: (action: 'plan' | 'start' | 'pause' | 'resume') => productionApi[action](id),
+    onSuccess: invalidate,
+    onError,
+  })
   const startStageMutation = useMutation({
     mutationFn: (stageId: string) => productionApi.startStage(id, stageId),
     onSuccess: invalidate,
@@ -59,6 +86,20 @@ export function AdminProductionDetailPage() {
   const activeStage = data?.stages.find((stage) => stage.id === activeStageId && stage.status === 'IN_PROGRESS') ?? null
   const breakdownStage = data?.stages.find((stage) => stage.id === breakdownStageId) ?? null
   const multiProduct = (data?.items.length ?? 0) > 1
+  const running = data?.status === 'IN_PROGRESS'
+  const nextStage = data?.stages.find((stage) => stage.status !== 'COMPLETED')
+  const lifecycleButton = (action: 'plan' | 'start' | 'pause' | 'resume', label: string, variant: 'default' | 'outline') => (
+    <Button variant={variant} disabled={lifecycle.isPending} onClick={() => lifecycle.mutate(action)}>
+      {lifecycle.isPending && lifecycle.variables === action ? (
+        <Spinner data-icon="inline-start" />
+      ) : action === 'pause' ? (
+        <PauseIcon data-icon="inline-start" />
+      ) : action === 'plan' ? null : (
+        <PlayIcon data-icon="inline-start" />
+      )}
+      {label}
+    </Button>
+  )
 
   return (
     <section className="flex flex-col gap-6">
@@ -78,34 +119,26 @@ export function AdminProductionDetailPage() {
               action={
                 <>
                   <StatusBadge status={data.status} />
-                  {data.can_start ? (
-                    <Button disabled={startMutation.isPending} onClick={() => startMutation.mutate()}>
-                      {startMutation.isPending ? <Spinner data-icon="inline-start" /> : null}
-                      Start production
+                  {canManage && data.can_plan ? lifecycleButton('plan', 'Plan', 'outline') : null}
+                  {canManage && data.can_start ? lifecycleButton('start', 'Start production', 'default') : null}
+                  {canManage && data.can_resume ? lifecycleButton('resume', 'Resume', 'default') : null}
+                  {canManage && data.can_pause ? lifecycleButton('pause', 'Pause', 'outline') : null}
+                  {canManage && data.can_cancel ? (
+                    <Button variant="destructive" onClick={() => setCancelOpen(true)}>
+                      Cancel
                     </Button>
-                  ) : null}
-                  {data.can_pause ? (
-                    <Button variant="outline" disabled={pauseMutation.isPending} onClick={() => pauseMutation.mutate()}>
-                      {pauseMutation.isPending ? <Spinner data-icon="inline-start" /> : null}
-                      Pause
-                    </Button>
-                  ) : null}
-                  {data.can_cancel ? (
-                    <ConfirmAction
-                      variant="destructive"
-                      title="Cancel this production order?"
-                      description="This cannot be undone. The production order will be cancelled."
-                      confirmLabel="Cancel production"
-                      cancelLabel="Keep production"
-                      trigger={<Button variant="destructive">Cancel</Button>}
-                      onConfirm={async () => {
-                        await cancelMutation.mutateAsync()
-                      }}
-                    />
                   ) : null}
                 </>
               }
             />
+
+            {data.status === 'PAUSED' ? (
+              <Alert>
+                <PauseIcon />
+                <AlertTitle>Production is paused</AlertTitle>
+                <AlertDescription>Resume it to start or complete stages.</AlertDescription>
+              </Alert>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <div className="flex flex-col gap-1">
@@ -121,9 +154,20 @@ export function AdminProductionDetailPage() {
                 <p className="tabular-nums">{formatQuantity(data.planned_quantity)}</p>
               </div>
               <div className="flex flex-col gap-1">
-                <p className="text-sm text-muted-foreground">Accepted output{multiProduct ? ' (total)' : ''}</p>
+                <p className="text-sm text-muted-foreground">
+                  {data.status === 'COMPLETED' ? 'Final output' : 'In process'}
+                  {multiProduct ? ' (total)' : ''}
+                </p>
                 <p className="tabular-nums">
-                  {formatQuantity(fromUnits(sumUnits(data.items.map((item) => item.accepted_output_quantity))))}
+                  {formatQuantity(
+                    fromUnits(
+                      sumUnits(
+                        data.items.map((item) =>
+                          data.status === 'COMPLETED' ? item.accepted_output_quantity : item.in_process_quantity,
+                        ),
+                      ),
+                    ),
+                  )}
                 </p>
               </div>
             </div>
@@ -160,7 +204,7 @@ export function AdminProductionDetailPage() {
                       key: 'in_process',
                       header: 'In process',
                       className: 'tabular-nums',
-                      cell: (item) => formatQuantity(currentQuantity(data, item.id, item.planned_quantity)),
+                      cell: (item) => formatQuantity(item.in_process_quantity),
                     },
                     {
                       key: 'lost',
@@ -170,7 +214,7 @@ export function AdminProductionDetailPage() {
                     },
                     {
                       key: 'output',
-                      header: 'Final output',
+                      header: 'Received into stock',
                       className: 'tabular-nums',
                       cell: (item) => (data.status === 'COMPLETED' ? formatQuantity(item.accepted_output_quantity) : '—'),
                     },
@@ -179,92 +223,178 @@ export function AdminProductionDetailPage() {
               </CardContent>
             </Card>
 
-            <ResponsiveTable
-              wide
-              data={data.stages}
-              getRowKey={(stage) => stage.execution_id}
-              columns={[
-                {
-                  key: 'sequence',
-                  header: '#',
-                  cell: (stage) => <span className="tabular-nums">{stage.sequence}</span>,
-                },
-                { key: 'name', header: 'Stage', primary: true, cell: (stage) => stage.name },
-                {
-                  key: 'status',
-                  header: 'Status',
-                  cell: (stage) => <StatusBadge status={stage.status} />,
-                },
-                {
-                  key: 'input',
-                  header: multiProduct ? 'Input (total)' : 'Input',
-                  cell: (stage) => <span className="tabular-nums">{formatQuantity(stage.input_quantity)}</span>,
-                },
-                {
-                  key: 'accepted',
-                  header: multiProduct ? 'Accepted (total)' : 'Accepted',
-                  cell: (stage) => (
-                    <span className="tabular-nums">{formatQuantity(stage.accepted_output_quantity)}</span>
-                  ),
-                },
-                {
-                  key: 'loss',
-                  header: multiProduct ? 'Loss (total)' : 'Loss',
-                  cell: (stage) => <span className="tabular-nums">{formatQuantity(stage.loss_quantity)}</span>,
-                },
-              ]}
-              rowAction={(stage) => (
-                <div className="flex justify-end gap-2">
-                  {stage.status === 'PENDING' && data.status === 'IN_PROGRESS' ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={startStageMutation.isPending}
-                      onClick={() => startStageMutation.mutate(stage.id)}
-                    >
-                      {startStageMutation.isPending && startStageMutation.variables === stage.id ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : null}
-                      Start
-                    </Button>
-                  ) : null}
-                  {stage.status === 'IN_PROGRESS' ? (
-                    <Button size="sm" onClick={() => setActiveStageId(stage.id)}>
-                      Complete
-                    </Button>
-                  ) : null}
-                  {multiProduct && stage.status === 'COMPLETED' ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setBreakdownStageId(breakdownStageId === stage.id ? null : stage.id)}
-                    >
-                      {breakdownStageId === stage.id ? 'Hide' : 'By product'}
-                    </Button>
-                  ) : null}
-                </div>
-              )}
-            />
+            {data.stages.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Stages are created from the production workflow when the order is started.
+              </p>
+            ) : (
+              <ResponsiveTable
+                wide
+                data={data.stages}
+                getRowKey={(stage) => stage.execution_id}
+                columns={[
+                  {
+                    key: 'sequence',
+                    header: '#',
+                    cell: (stage) => <span className="tabular-nums">{stage.sequence}</span>,
+                  },
+                  { key: 'name', header: 'Stage', primary: true, cell: (stage) => stage.name },
+                  {
+                    key: 'status',
+                    header: 'Status',
+                    mobile: true,
+                    cell: (stage) => <StatusBadge status={stage.status} />,
+                  },
+                  {
+                    key: 'input',
+                    header: multiProduct ? 'Input (total)' : 'Input',
+                    cell: (stage) => <span className="tabular-nums">{formatQuantity(stage.input_quantity)}</span>,
+                  },
+                  {
+                    key: 'accepted',
+                    header: multiProduct ? 'Accepted (total)' : 'Accepted',
+                    cell: (stage) => (
+                      <span className="tabular-nums">{formatQuantity(stage.accepted_output_quantity)}</span>
+                    ),
+                  },
+                  {
+                    key: 'loss',
+                    header: multiProduct ? 'Loss (total)' : 'Loss',
+                    cell: (stage) => <span className="tabular-nums">{formatQuantity(stage.loss_quantity)}</span>,
+                  },
+                  {
+                    key: 'by',
+                    header: 'Done by',
+                    cell: (stage) =>
+                      stage.performed_by_name ? (
+                        <span className="flex flex-col">
+                          <span>{stage.performed_by_name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDateTime(stage.completed_at ?? stage.started_at)}
+                          </span>
+                        </span>
+                      ) : (
+                        '—'
+                      ),
+                  },
+                ]}
+                rowAction={(stage) => (
+                  <div className="flex justify-end gap-2">
+                    {canExecute && running && stage.status === 'PENDING' && stage.id === nextStage?.id ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={startStageMutation.isPending}
+                        onClick={() => startStageMutation.mutate(stage.id)}
+                      >
+                        {startStageMutation.isPending ? <Spinner data-icon="inline-start" /> : null}
+                        Start
+                      </Button>
+                    ) : null}
+                    {canExecute && running && stage.status === 'IN_PROGRESS' ? (
+                      <Button size="sm" onClick={() => setActiveStageId(stage.id)}>
+                        Complete
+                      </Button>
+                    ) : null}
+                    {stage.status === 'COMPLETED' ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setBreakdownStageId(breakdownStageId === stage.id ? null : stage.id)}
+                      >
+                        {breakdownStageId === stage.id ? 'Hide' : 'Details'}
+                      </Button>
+                    ) : null}
+                  </div>
+                )}
+              />
+            )}
 
             {breakdownStage ? <StageBreakdown stage={breakdownStage} onClose={() => setBreakdownStageId(null)} /> : null}
 
-            {activeStage ? (
-              // Keyed so the form resets when switching stages.
-              <CompleteStageForm
-                key={activeStage.id}
-                productionId={id}
-                stage={activeStage}
-                onDone={() => {
-                  setActiveStageId(null)
-                  invalidate()
-                }}
-                onCancel={() => setActiveStageId(null)}
-              />
+            {activeStage && running && canExecute ? (
+              <QueryState
+                isLoading={lossReasons.isLoading}
+                error={lossReasons.error ? 'Unable to load loss reasons.' : null}
+              >
+                {lossReasons.data ? (
+                  // Keyed so the form resets when switching stages.
+                  <CompleteStageForm
+                    key={activeStage.id}
+                    productionId={id}
+                    stage={activeStage}
+                    lossReasons={lossReasons.data.items.filter((reason) => reason.is_active)}
+                    onDone={() => {
+                      setActiveStageId(null)
+                      invalidate()
+                    }}
+                    onCancel={() => setActiveStageId(null)}
+                  />
+                ) : null}
+              </QueryState>
             ) : null}
+
+            <CancelProductionDialog
+              open={cancelOpen}
+              onOpenChange={setCancelOpen}
+              production={data}
+              onCancelled={invalidate}
+            />
           </>
         ) : null}
       </QueryState>
     </section>
+  )
+}
+
+function CancelProductionDialog({
+  open,
+  onOpenChange,
+  production,
+  onCancelled,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  production: ProductionDetail
+  onCancelled: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const cancel = useMutation({
+    mutationFn: () => productionApi.cancel(production.id, reason.trim() || undefined),
+    onSuccess: () => {
+      toast.success(`${production.reference} cancelled`)
+      onOpenChange(false)
+      setReason('')
+      onCancelled()
+    },
+  })
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancel {production.reference}?</DialogTitle>
+          <DialogDescription>
+            This cannot be undone. Units still in process are not added to stock; completed stages stay in the history.
+          </DialogDescription>
+        </DialogHeader>
+        <Field>
+          <FieldLabel htmlFor="cancel-reason">Reason</FieldLabel>
+          <Textarea id="cancel-reason" rows={2} value={reason} onChange={(event) => setReason(event.target.value)} />
+          <FieldDescription>Recorded in the audit log.</FieldDescription>
+        </Field>
+        {cancel.error ? <FieldError>{cancel.error.message}</FieldError> : null}
+        <DialogFooter>
+          <Button variant="outline" disabled={cancel.isPending} onClick={() => onOpenChange(false)}>
+            Keep production
+          </Button>
+          <Button variant="destructive" disabled={cancel.isPending} onClick={() => cancel.mutate()}>
+            {cancel.isPending ? <Spinner data-icon="inline-start" /> : null}
+            Cancel production
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -281,14 +411,18 @@ interface LineDraft {
 function CompleteStageForm({
   productionId,
   stage,
+  lossReasons,
   onDone,
   onCancel,
 }: {
   productionId: string
   stage: ProductionStage
+  lossReasons: ProductionLossReason[]
   onDone: () => void
   onCancel: () => void
 }) {
+  const recordsQuantity = stage.can_record_quantity
+  const recordsLoss = stage.can_record_loss && recordsQuantity
   const [lines, setLines] = useState<LineDraft[]>(() =>
     stage.lines.map((line) => ({
       item_id: line.item_id,
@@ -297,12 +431,11 @@ function CompleteStageForm({
       input: line.input_quantity,
       accepted: line.input_quantity,
       loss: '0',
-      reason: 'QUALITY_REJECT',
+      reason: lossReasons[0]?.code ?? '',
     })),
   )
   const [notes, setNotes] = useState('')
   const [showErrors, setShowErrors] = useState(false)
-  const balanced = stage.reconciliation_mode === 'STRICT'
 
   const update = (itemId: string, patch: Partial<LineDraft>) =>
     setLines((current) => current.map((line) => (line.item_id === itemId ? { ...line, ...patch } : line)))
@@ -317,16 +450,22 @@ function CompleteStageForm({
     update(line.item_id, patch)
   }
 
+  const hasLoss = (line: LineDraft) => DECIMAL.test((line.loss || '0').trim()) && toUnits(line.loss || '0') > 0
+
   const lineError = (line: LineDraft): string | null => {
+    if (!recordsQuantity) return null
     if (!DECIMAL.test(line.accepted.trim()) || !DECIMAL.test((line.loss || '0').trim())) {
       return 'Enter quantities of 0 or more (up to 4 decimals).'
     }
     const sum = toUnits(line.accepted) + toUnits(line.loss || '0')
-    if (balanced && sum !== toUnits(line.input)) {
+    if (stage.reconciliation_mode === 'STRICT' && sum !== toUnits(line.input)) {
       return `Accepted + loss must equal the input (${formatQuantity(line.input)}).`
     }
     if (stage.reconciliation_mode === 'FLEXIBLE' && sum > toUnits(line.input)) {
       return `Accepted + loss cannot exceed the input (${formatQuantity(line.input)}).`
+    }
+    if (hasLoss(line) && !line.reason) {
+      return 'Choose a loss reason.'
     }
     return null
   }
@@ -335,15 +474,17 @@ function CompleteStageForm({
     mutationFn: () =>
       productionApi.completeStage(productionId, stage.id, {
         notes: notes.trim() || undefined,
-        items: lines.map((line) => {
-          const loss = fromUnits(toUnits(line.loss || '0'))
-          return {
-            item_id: line.item_id,
-            accepted_output_quantity: fromUnits(toUnits(line.accepted)),
-            loss_quantity: loss,
-            losses: toUnits(loss) > 0 ? [{ reason_code: line.reason, quantity: loss }] : undefined,
-          }
-        }),
+        items: recordsQuantity
+          ? lines.map((line) => {
+              const loss = fromUnits(toUnits(line.loss || '0'))
+              return {
+                item_id: line.item_id,
+                accepted_output_quantity: fromUnits(toUnits(line.accepted)),
+                loss_quantity: loss,
+                losses: toUnits(loss) > 0 ? [{ reason_code: line.reason, quantity: loss }] : undefined,
+              }
+            })
+          : [],
       }),
     onSuccess: () => {
       toast.success(`${stage.name} completed`)
@@ -358,12 +499,9 @@ function CompleteStageForm({
       <CardHeader>
         <CardTitle>Complete {stage.name}</CardTitle>
         <CardDescription>
-          Record what came out of this stage for each product.{' '}
-          {balanced
-            ? 'Accepted + loss must equal what went in.'
-            : stage.reconciliation_mode === 'FLEXIBLE'
-              ? 'Accepted + loss may be less than what went in.'
-              : 'Output is counted in its own unit.'}
+          {recordsQuantity
+            ? `Record what came out of this stage for each product. ${MODE_HINT[stage.reconciliation_mode] ?? ''}`
+            : 'This stage does not record quantities: everything that went in moves on to the next stage.'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -390,7 +528,6 @@ function CompleteStageForm({
               <TableBody>
                 {lines.map((line) => {
                   const error = showErrors ? lineError(line) : null
-                  const hasLoss = DECIMAL.test((line.loss || '0').trim()) && toUnits(line.loss || '0') > 0
 
                   return (
                     <TableRow key={line.item_id}>
@@ -408,6 +545,7 @@ function CompleteStageForm({
                           inputMode="decimal"
                           className="w-24 tabular-nums"
                           value={line.accepted}
+                          disabled={!recordsQuantity}
                           aria-invalid={error ? true : undefined}
                           onChange={(event) => update(line.item_id, { accepted: event.target.value })}
                         />
@@ -418,7 +556,7 @@ function CompleteStageForm({
                           inputMode="decimal"
                           className="w-24 tabular-nums"
                           value={line.loss}
-                          disabled={!stage.can_record_loss}
+                          disabled={!recordsLoss}
                           aria-invalid={error ? true : undefined}
                           onChange={(event) => updateLoss(line, event.target.value)}
                         />
@@ -427,11 +565,11 @@ function CompleteStageForm({
                         <NativeSelect
                           aria-label={`Loss reason for ${line.sku}`}
                           value={line.reason}
-                          disabled={!hasLoss}
+                          disabled={!recordsLoss || !hasLoss(line)}
                           onChange={(event) => update(line.item_id, { reason: event.target.value })}
                         >
-                          {LOSS_REASONS.map((reason) => (
-                            <NativeSelectOption key={reason.value} value={reason.value}>
+                          {lossReasons.map((reason) => (
+                            <NativeSelectOption key={reason.id} value={reason.code}>
                               {reason.label}
                             </NativeSelectOption>
                           ))}
@@ -443,6 +581,10 @@ function CompleteStageForm({
               </TableBody>
             </Table>
           </div>
+
+          {recordsQuantity && !stage.can_record_loss ? (
+            <p className="text-sm text-muted-foreground">Losses are not recorded at this stage.</p>
+          ) : null}
 
           <Field>
             <FieldLabel htmlFor="stage-notes">Notes</FieldLabel>
@@ -470,7 +612,12 @@ function StageBreakdown({ stage, onClose }: { stage: ProductionStage; onClose: (
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{stage.name} — by product</CardTitle>
+        <CardTitle>{stage.name}</CardTitle>
+        <CardDescription>
+          {stage.performed_by_name ? `By ${stage.performed_by_name}` : null}
+          {stage.completed_at ? ` · completed ${formatDateTime(stage.completed_at)}` : null}
+          {stage.notes ? ` · ${stage.notes}` : null}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <ResponsiveTable
@@ -504,6 +651,16 @@ function StageBreakdown({ stage, onClose }: { stage: ProductionStage; onClose: (
               className: 'tabular-nums',
               cell: (line) => formatQuantity(line.loss_quantity),
             },
+            {
+              key: 'reasons',
+              header: 'Loss reasons',
+              cell: (line) =>
+                line.losses.length > 0
+                  ? line.losses
+                      .map((loss) => `${loss.reason_label ?? loss.reason_code} ×${formatQuantity(loss.quantity)}`)
+                      .join(', ')
+                  : '—',
+            },
           ]}
         />
       </CardContent>
@@ -525,15 +682,4 @@ function describeProducts(data: ProductionDetail): string {
 
 function sumUnits(values: string[]): number {
   return values.reduce((total, value) => total + toUnits(value), 0)
-}
-
-/** Quantity of a product still moving through the stages: the latest stage's input or accepted output. */
-function currentQuantity(data: ProductionDetail, itemId: string, planned: string): string {
-  let current = planned
-  for (const stage of data.stages) {
-    const line = stage.lines.find((candidate) => candidate.item_id === itemId)
-    if (!line) continue
-    current = stage.status === 'COMPLETED' ? line.accepted_output_quantity : line.input_quantity
-  }
-  return current
 }

@@ -16,6 +16,8 @@ use Doctrine\ORM\EntityManagerInterface;
 
 final class AvailabilityService
 {
+    public const DEFAULT_LOCATION_CODE = 'MAIN';
+
     public function __construct(private EntityManagerInterface $entityManager)
     {
     }
@@ -83,10 +85,15 @@ final class AvailabilityService
         return bcadd((string) $qb->getQuery()->getSingleScalarResult(), '0', 4);
     }
 
+    /**
+     * Units committed to manufacturing (planned, running or paused orders) that have not been lost
+     * at a stage yet — the "Already in production" figure of the demand view (blueprint §7.3).
+     */
     private function sumInProduction(EntityId $companyId, ProductVariant $variant): string
     {
-        $qb = $this->entityManager->createQueryBuilder()
-            ->select('COALESCE(SUM(i.plannedQuantity), 0)')
+        /** @var list<ProductionItem> $items */
+        $items = $this->entityManager->createQueryBuilder()
+            ->select('i', 'p')
             ->from(ProductionItem::class, 'i')
             ->join('i.productionOrder', 'p')
             ->where('p.companyId = :companyId')
@@ -98,12 +105,56 @@ final class AvailabilityService
                 ProductionStatus::Planned->value,
                 ProductionStatus::InProgress->value,
                 ProductionStatus::Paused->value,
-            ]);
+            ])
+            ->getQuery()
+            ->getResult();
 
-        // Normalise to scale 4: the raw SUM() format depends on the database driver.
-        return bcadd((string) $qb->getQuery()->getSingleScalarResult(), '0', 4);
+        $total = '0.0000';
+        foreach ($items as $item) {
+            $total = bcadd($total, $item->getProductionOrder()->currentQuantityFor($item)->amount(), 4);
+        }
+
+        return $total;
     }
 
+    /**
+     * The location stock operations post to. A company that has none yet (fresh install, seeds never
+     * run) gets a "MAIN" location, so reservations, receipts and adjustments never dead-end on setup.
+     * The new location is persisted; the caller's transaction flushes it.
+     */
+    public function requireDefaultLocation(EntityId $companyId): StockLocation
+    {
+        $location = $this->resolveDefaultLocation($companyId);
+
+        if ($location !== null) {
+            return $location;
+        }
+
+        /** @var StockLocation|null $main */
+        $main = $this->entityManager->getRepository(StockLocation::class)->findOneBy([
+            'companyId' => $companyId->toString(),
+            'code' => self::DEFAULT_LOCATION_CODE,
+        ]);
+
+        if ($main !== null) {
+            $main->makeActiveDefault();
+
+            return $main;
+        }
+
+        $main = new StockLocation(
+            EntityId::generate(),
+            $companyId,
+            self::DEFAULT_LOCATION_CODE,
+            'Main Warehouse',
+            isDefault: true,
+        );
+        $this->entityManager->persist($main);
+
+        return $main;
+    }
+
+    /** Read-only lookup: null when the company has no active location yet. */
     public function resolveDefaultLocation(EntityId $companyId): ?StockLocation
     {
         /** @var StockLocation|null $location */

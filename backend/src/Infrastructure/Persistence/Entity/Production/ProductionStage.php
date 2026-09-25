@@ -100,4 +100,28 @@ class ProductionStage implements CompanyScoped
     {
         return $this->isActive;
     }
+
+    /**
+     * Changes apply to productions started afterwards and to stages not yet completed;
+     * finished stage executions keep the quantities they recorded.
+     */
+    public function configure(
+        string $name,
+        ReconciliationMode $reconciliationMode,
+        bool $canRecordQuantity,
+        bool $canRecordLoss,
+        bool $isActive,
+    ): void {
+        $this->name = $name;
+        $this->reconciliationMode = $reconciliationMode;
+        $this->canRecordQuantity = $canRecordQuantity;
+        $this->canRecordLoss = $canRecordLoss;
+        $this->isActive = $isActive;
+    }
+
+    /** Running productions keep the order they started with (stage executions snapshot the sequence). */
+    public function moveToSequence(int $sequence): void
+    {
+        $this->sequence = $sequence;
+    }
 }

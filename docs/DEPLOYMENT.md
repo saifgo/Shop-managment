@@ -56,6 +56,8 @@ Set these in `.env`. Compose builds `DATABASE_URL` from the Postgres settings, s
 
 `APP_ENV` is `prod` inside this Compose file. Postgres and the MinIO console bind to `127.0.0.1` unless you change `POSTGRES_BIND` or `MINIO_BIND`. Redis stays on the Compose network only.
 
+Operational defaults do not need seeding: the first time they are needed, a company gets the default production workflow (7 stages, loss reasons — editable under Production → Workflow) and a `MAIN` stock location.
+
 Demo seed data is not loaded automatically. To load it on a fresh database:
 
 ```bash

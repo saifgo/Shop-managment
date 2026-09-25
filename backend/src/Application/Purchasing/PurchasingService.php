@@ -250,11 +250,7 @@ final class PurchasingService
             }
 
             $po = $this->findPurchaseOrder($user, $poId);
-            $location = $this->availabilityService->resolveDefaultLocation($user->companyId());
-
-            if ($location === null) {
-                throw new BadRequestHttpException('No stock location configured.');
-            }
+            $location = $this->availabilityService->requireDefaultLocation($user->companyId());
 
             if ($lines === []) {
                 throw new BadRequestHttpException('At least one receipt line is required.');

@@ -29,11 +29,7 @@ final class ReservationService
     public function reserveOrder(Order $order, ?EntityId $actorUserId = null): void
     {
         $companyId = $order->companyId();
-        $location = $this->availabilityService->resolveDefaultLocation($companyId);
-
-        if ($location === null) {
-            throw new \DomainException('No stock location configured.');
-        }
+        $location = $this->availabilityService->requireDefaultLocation($companyId);
 
         foreach ($order->getItems() as $item) {
             $this->reserveLine($order, $item, $location, $companyId, $actorUserId);
@@ -131,7 +127,7 @@ final class ReservationService
             $this->releaseExistingAllocations(
                 $item,
                 $order->companyId(),
-                $this->availabilityService->resolveDefaultLocation($order->companyId()),
+                $this->availabilityService->requireDefaultLocation($order->companyId()),
                 $actorUserId,
                 $order->getReference(),
             );
@@ -192,11 +188,7 @@ final class ReservationService
         ?string $deliveryReference = null,
         bool $isReplacement = false,
     ): void {
-        $location = $this->availabilityService->resolveDefaultLocation($companyId);
-
-        if ($location === null) {
-            throw new \DomainException('No stock location configured.');
-        }
+        $location = $this->availabilityService->requireDefaultLocation($companyId);
 
         /** @var list<Reservation> $reservations */
         $reservations = $this->entityManager->getRepository(Reservation::class)->findBy([

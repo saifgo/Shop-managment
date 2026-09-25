@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { PlusIcon } from 'lucide-react'
+import { PlusIcon, Settings2Icon } from 'lucide-react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
@@ -74,6 +74,12 @@ export function AdminProductionPage() {
               <ToggleGroupItem value="board">Stage board</ToggleGroupItem>
               <ToggleGroupItem value="demand">Demand planning</ToggleGroupItem>
             </ToggleGroup>
+            {canManage ? (
+              <Button variant="outline" render={<Link to="/admin/production/settings" />} nativeButton={false}>
+                <Settings2Icon data-icon="inline-start" />
+                Workflow
+              </Button>
+            ) : null}
             {canManage ? (
               <Button onClick={() => openCreate()}>
                 <PlusIcon data-icon="inline-start" />

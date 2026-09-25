@@ -83,7 +83,17 @@ final class ProductionController extends AbstractController
         return $this->json($this->productionService->get($user, $id));
     }
 
+    #[Route('/api/productions/{id}/plan', name: 'api_productions_plan', methods: ['POST'])]
+    #[OA\Post(path: '/api/productions/{id}/plan', summary: 'Plan a draft production order (DRAFT -> PLANNED)', security: [['Bearer' => []]])]
+    public function plan(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_MANAGE);
+
+        return $this->json($this->productionService->plan($user, $id));
+    }
+
     #[Route('/api/productions/{id}/start', name: 'api_productions_start', methods: ['POST'])]
+    #[OA\Post(path: '/api/productions/{id}/start', summary: 'Start a production order; creates its stage executions', security: [['Bearer' => []]])]
     public function start(string $id, #[CurrentUser] User $user): JsonResponse
     {
         $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_MANAGE);
@@ -92,11 +102,21 @@ final class ProductionController extends AbstractController
     }
 
     #[Route('/api/productions/{id}/pause', name: 'api_productions_pause', methods: ['POST'])]
+    #[OA\Post(path: '/api/productions/{id}/pause', summary: 'Pause a running production order', security: [['Bearer' => []]])]
     public function pause(string $id, #[CurrentUser] User $user): JsonResponse
     {
         $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_MANAGE);
 
         return $this->json($this->productionService->pause($user, $id));
+    }
+
+    #[Route('/api/productions/{id}/resume', name: 'api_productions_resume', methods: ['POST'])]
+    #[OA\Post(path: '/api/productions/{id}/resume', summary: 'Resume a paused production order', security: [['Bearer' => []]])]
+    public function resume(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_MANAGE);
+
+        return $this->json($this->productionService->resume($user, $id));
     }
 
     #[Route('/api/productions/{id}/cancel', name: 'api_productions_cancel', methods: ['POST'])]

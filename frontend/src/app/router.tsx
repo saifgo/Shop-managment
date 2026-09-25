@@ -28,6 +28,7 @@ import { PortalOrdersPage } from '@/features/portal/pages/PortalOrdersPage'
 import { PortalProductPage } from '@/features/portal/pages/PortalProductPage'
 import { AdminProductionDetailPage } from '@/features/admin/pages/AdminProductionDetailPage'
 import { AdminProductionPage } from '@/features/admin/pages/AdminProductionPage'
+import { AdminProductionSettingsPage } from '@/features/admin/pages/AdminProductionSettingsPage'
 import { AdminInvoicesPage, AdminPaymentsPage } from '@/features/admin/pages/AdminFinancePage'
 import { AdminLightweightFinancePage } from '@/features/admin/pages/AdminLightweightFinancePage'
 import { AdminPurchasingPage, AdminSuppliersPage } from '@/features/admin/pages/AdminPurchasingPage'
@@ -214,6 +215,14 @@ export function AppRouter() {
           element={
             <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.productionView]}>
               <AdminProductionPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="production/settings"
+          element={
+            <ProtectedRoute loginPath="/admin/login" requiredPermissions={[PERMISSIONS.productionManage]}>
+              <AdminProductionSettingsPage />
             </ProtectedRoute>
           }
         />

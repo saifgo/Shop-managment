@@ -160,11 +160,7 @@ final class InventoryService
             $variant = $this->findVariant($user, $variantId);
             $location = $locationId !== null && $locationId !== ''
                 ? $this->findLocation($user, $locationId)
-                : $this->availabilityService->resolveDefaultLocation($user->companyId());
-
-            if ($location === null) {
-                throw new BadRequestHttpException('No stock location configured.');
-            }
+                : $this->availabilityService->requireDefaultLocation($user->companyId());
 
             $quantityDelta = trim($quantityDelta);
             if (!preg_match('/^-?\d+(\.\d{1,4})?$/', $quantityDelta)) {

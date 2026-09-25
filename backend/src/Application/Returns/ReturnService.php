@@ -177,11 +177,7 @@ final class ReturnService
                 $itemsById[$item->getId()] = $item;
             }
 
-            $location = $this->availabilityService->resolveDefaultLocation($user->companyId());
-
-            if ($location === null) {
-                throw new BadRequestHttpException('No stock location configured.');
-            }
+            $location = $this->availabilityService->requireDefaultLocation($user->companyId());
 
             foreach ($items as $itemPayload) {
                 $returnItem = $itemsById[$itemPayload['return_item_id']] ?? null;

@@ -5,11 +5,8 @@ declare(strict_types=1);
 namespace App\Application\Production;
 
 use App\Application\Inventory\AvailabilityService;
-use App\Domain\Production\ProductionStatus;
 use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Identity\User;
-use App\Infrastructure\Persistence\Entity\Production\ProductionItem;
-use App\Infrastructure\Persistence\Entity\Production\ProductionOrder;
 use App\Infrastructure\Persistence\Entity\Sales\OrderItem;
 use App\Domain\Sales\OrderStatus;
 use Doctrine\ORM\EntityManagerInterface;
@@ -76,7 +73,7 @@ final class ProductionDemandQueryService
         foreach ($aggregated as $variantKey => &$row) {
             $variant = $this->entityManager->getReference(ProductVariant::class, $variantKey);
             $availability = $this->availabilityService->forVariant($user->companyId(), $variant);
-            $inProduction = $this->sumInProduction($user, $variantKey);
+            $inProduction = $availability['already_in_production'];
 
             $row['on_hand'] = $availability['physical_on_hand'];
             $row['net_demand'] = $availability['net_production_demand'];
@@ -86,25 +83,5 @@ final class ProductionDemandQueryService
         }
 
         return ['items' => array_values($aggregated)];
-    }
-
-    private function sumInProduction(User $user, string $variantId): string
-    {
-        $qb = $this->entityManager->createQueryBuilder()
-            ->select('COALESCE(SUM(i.plannedQuantity), 0)')
-            ->from(ProductionItem::class, 'i')
-            ->join('i.productionOrder', 'p')
-            ->where('p.companyId = :companyId')
-            ->andWhere('i.variant = :variantId')
-            ->andWhere('p.status IN (:statuses)')
-            ->setParameter('companyId', $user->companyId()->toString())
-            ->setParameter('variantId', $variantId)
-            ->setParameter('statuses', [
-                ProductionStatus::Planned->value,
-                ProductionStatus::InProgress->value,
-                ProductionStatus::Paused->value,
-            ]);
-
-        return (string) $qb->getQuery()->getSingleScalarResult();
     }
 }

@@ -69,4 +69,10 @@ class ProductionLossReason implements CompanyScoped
     {
         return $this->isActive;
     }
+
+    public function update(string $label, bool $isActive): void
+    {
+        $this->label = $label;
+        $this->isActive = $isActive;
+    }
 }

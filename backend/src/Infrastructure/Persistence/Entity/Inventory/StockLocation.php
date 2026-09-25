@@ -79,4 +79,11 @@ class StockLocation implements CompanyScoped
     {
         return $this->isActive;
     }
+
+    /** Makes this the active default location (used when a company has no usable location). */
+    public function makeActiveDefault(): void
+    {
+        $this->isActive = true;
+        $this->isDefault = true;
+    }
 }

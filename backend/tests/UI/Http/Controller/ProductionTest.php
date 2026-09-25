@@ -330,6 +330,8 @@ final class ProductionTest extends AuthenticatedApiTestCase
             content: json_encode([
                 'accepted_output_quantity' => $accepted,
                 'loss_quantity' => $loss,
+                // Every lost unit needs a configured reason.
+                'losses' => bccomp($loss, '0', 4) > 0 ? [['reason_code' => 'QUALITY_REJECT', 'quantity' => $loss]] : [],
             ], JSON_THROW_ON_ERROR),
         );
         self::assertResponseIsSuccessful();
