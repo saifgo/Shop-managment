@@ -21,6 +21,7 @@ use Doctrine\ORM\Mapping as ORM;
 #[ORM\Table(name: 'commercial_documents')]
 #[ORM\UniqueConstraint(name: 'UNIQ_DOCUMENT_NUMBER', columns: ['company_id', 'document_type', 'fiscal_year', 'document_number'])]
 #[ORM\UniqueConstraint(name: 'UNIQ_DOCUMENT_IDEMPOTENCY', columns: ['company_id', 'idempotency_key'])]
+#[ORM\UniqueConstraint(name: 'UNIQ_DOCUMENT_SHARE_TOKEN', columns: ['share_token'])]
 class CommercialDocument implements CompanyScoped
 {
     #[ORM\Id]
@@ -90,6 +91,10 @@ class CommercialDocument implements CompanyScoped
     #[ORM\Column(name: 'discount_total_amount', type: 'decimal', precision: 19, scale: 4)]
     private string $discountTotalAmount;
 
+    /** Invoice stamp duty ("timbre fiscal"), already included in the grand total. */
+    #[ORM\Column(name: 'stamp_duty_amount', type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
+    private string $stampDutyAmount = '0.0000';
+
     #[ORM\Column(name: 'grand_total_amount', type: 'decimal', precision: 19, scale: 4)]
     private string $grandTotalAmount;
 
@@ -116,6 +121,10 @@ class CommercialDocument implements CompanyScoped
 
     #[ORM\Column(name: 'idempotency_key', length: 255, nullable: true)]
     private ?string $idempotencyKey;
+
+    /** Secret for the public share link; null while the document is not shared. */
+    #[ORM\Column(name: 'share_token', length: 64, nullable: true)]
+    private ?string $shareToken = null;
 
     #[ORM\Column(name: 'created_by', type: 'string', length: 26, nullable: true)]
     private ?string $createdBy;
@@ -153,6 +162,7 @@ class CommercialDocument implements CompanyScoped
         ?string $notes = null,
         ?string $idempotencyKey = null,
         ?EntityId $createdBy = null,
+        ?Money $stampDuty = null,
     ) {
         $this->id = $id->toString();
         $this->companyId = $companyId->toString();
@@ -175,6 +185,7 @@ class CommercialDocument implements CompanyScoped
         $this->taxTotalAmount = $taxTotal->amount();
         $this->discountTotalAmount = $discountTotal->amount();
         $this->grandTotalAmount = $grandTotal->amount();
+        $this->stampDutyAmount = $stampDuty?->amount() ?? '0.0000';
         $this->notes = $notes;
         $this->idempotencyKey = $idempotencyKey;
         $this->createdBy = $createdBy?->toString();
@@ -253,6 +264,11 @@ class CommercialDocument implements CompanyScoped
         return Money::of($this->discountTotalAmount, $this->currency);
     }
 
+    public function getStampDuty(): Money
+    {
+        return Money::of($this->stampDutyAmount, $this->currency);
+    }
+
     public function getGrandTotal(): Money
     {
         return Money::of($this->grandTotalAmount, $this->currency);
@@ -296,6 +312,27 @@ class CommercialDocument implements CompanyScoped
     public function getIdempotencyKey(): ?string
     {
         return $this->idempotencyKey;
+    }
+
+    public function getShareToken(): ?string
+    {
+        return $this->shareToken;
+    }
+
+    public function enableSharing(string $token): void
+    {
+        if (!$this->isPosted) {
+            throw new \DomainException('Only issued documents can be shared.');
+        }
+
+        $this->shareToken = $token;
+        $this->updatedAt = new \DateTimeImmutable();
+    }
+
+    public function disableSharing(): void
+    {
+        $this->shareToken = null;
+        $this->updatedAt = new \DateTimeImmutable();
     }
 
     public function getCreatedAt(): \DateTimeImmutable

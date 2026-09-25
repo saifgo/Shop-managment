@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { documentTypeLabel, isDocumentType, previewLineTotals } from '@/lib/api/documents'
+import { documentTypeLabel, filenameFromDisposition, isDocumentType, previewLineTotals } from '@/lib/api/documents'
 
 describe('previewLineTotals', () => {
   // Same figures as ManualDocumentsTest on the backend: 2 × 100, 10 discount, 20% tax.
@@ -22,5 +22,17 @@ describe('document type helpers', () => {
     expect(isDocumentType('PROFORMA')).toBe(true)
     expect(isDocumentType('RECEIPT')).toBe(false)
     expect(isDocumentType(null)).toBe(false)
+  })
+})
+
+describe('filenameFromDisposition', () => {
+  it('reads unquoted and quoted filenames, as Symfony sends either', () => {
+    expect(filenameFromDisposition('attachment; filename=Facture_INV-2026-000001.pdf')).toBe('Facture_INV-2026-000001.pdf')
+    expect(filenameFromDisposition('inline; filename="Bon_de_livraison_DN 1.pdf"')).toBe('Bon_de_livraison_DN 1.pdf')
+  })
+
+  it('returns null without a filename', () => {
+    expect(filenameFromDisposition(null)).toBeNull()
+    expect(filenameFromDisposition('attachment')).toBeNull()
   })
 })

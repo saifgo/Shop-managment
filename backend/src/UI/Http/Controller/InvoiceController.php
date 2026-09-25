@@ -11,6 +11,7 @@ use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Security\PermissionVoter;
 use OpenApi\Attributes as OA;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -92,6 +93,7 @@ final class InvoiceController extends AbstractController
     }
 
     #[Route('/api/documents/{id}/download', name: 'api_documents_download', methods: ['GET'])]
+    #[OA\Get(path: '/api/documents/{id}/download', summary: 'Download the document PDF (generated on demand when missing)', security: [['Bearer' => []]])]
     public function download(string $id, #[CurrentUser] User $user): Response
     {
         if ($user->isPortalUser()) {
@@ -104,7 +106,8 @@ final class InvoiceController extends AbstractController
 
         return new Response($file['content'], Response::HTTP_OK, [
             'Content-Type' => $file['mime_type'],
-            'Content-Disposition' => 'attachment; filename="'.$file['filename'].'"',
+            'Content-Disposition' => HeaderUtils::makeDisposition(HeaderUtils::DISPOSITION_ATTACHMENT, $file['filename']),
+            'Cache-Control' => 'private, no-store',
         ]);
     }
 

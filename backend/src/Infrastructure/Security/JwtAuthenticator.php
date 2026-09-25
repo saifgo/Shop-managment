@@ -29,7 +29,8 @@ final class JwtAuthenticator extends AbstractAuthenticator
 
         $path = $request->getPathInfo();
 
-        if (str_starts_with($path, '/api/media/') && $request->isMethod('GET')) {
+        // Product pictures and shared-document links are opened without a bearer token.
+        if ((str_starts_with($path, '/api/media/') || str_starts_with($path, '/api/public/')) && $request->isMethod('GET')) {
             return false;
         }
 

@@ -167,10 +167,6 @@ export const invoicesApi = {
       return (await response.json()) as InvoiceDocument
     })
   },
-
-  downloadUrl(id: string) {
-    return `${base}/api/documents/${id}/download`
-  },
 }
 
 export const paymentsApi = {

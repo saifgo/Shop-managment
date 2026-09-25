@@ -27,6 +27,20 @@ enum DocumentType: string
         };
     }
 
+    /** Title printed on the generated document, e.g. "Facture N° INV-2026-000001". */
+    public function printedTitle(): string
+    {
+        return match ($this) {
+            self::Quote => 'Devis',
+            self::Proforma => 'Facture proforma',
+            self::SalesOrder => 'Bon de commande',
+            self::DeliveryNote => 'Bon de livraison',
+            self::GoodsIssue => 'Bon de sortie',
+            self::Invoice => 'Facture',
+            self::CreditNote => 'Avoir',
+        };
+    }
+
     /**
      * Types an admin may create by hand. Credit notes are excluded because they
      * must reference an issued invoice through the credit-note workflow.

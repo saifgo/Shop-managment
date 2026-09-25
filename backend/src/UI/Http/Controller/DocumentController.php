@@ -99,6 +99,33 @@ final class DocumentController extends AbstractController
 
         return $this->json($this->documentService->cancelDocument($user, $id));
     }
+
+    #[Route('/api/documents/{id}/pdf', name: 'api_documents_regenerate_pdf', methods: ['POST'])]
+    #[OA\Post(path: '/api/documents/{id}/pdf', summary: 'Render a new PDF version with the current company details', security: [['Bearer' => []]])]
+    public function regeneratePdf(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::DOCUMENTS_MANAGE);
+
+        return $this->json($this->documentService->regeneratePdf($user, $id));
+    }
+
+    #[Route('/api/documents/{id}/share', name: 'api_documents_share', methods: ['POST'])]
+    #[OA\Post(path: '/api/documents/{id}/share', summary: 'Create (or keep) the public link to view and download an issued document', security: [['Bearer' => []]])]
+    public function share(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::DOCUMENTS_MANAGE);
+
+        return $this->json($this->documentService->share($user, $id));
+    }
+
+    #[Route('/api/documents/{id}/share', name: 'api_documents_unshare', methods: ['DELETE'])]
+    #[OA\Delete(path: '/api/documents/{id}/share', summary: 'Revoke the public link of a document', security: [['Bearer' => []]])]
+    public function unshare(string $id, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::DOCUMENTS_MANAGE);
+
+        return $this->json($this->documentService->unshare($user, $id));
+    }
 }
 
 final readonly class CreateManualDocumentRequest

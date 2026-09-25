@@ -1,4 +1,4 @@
-import { apiClient } from '@/lib/api/client'
+import { apiClient, apiUrl } from '@/lib/api/client'
 import type { MoneyAmount, Paginated } from '@/lib/api/orders'
 import { getAccessToken } from '@/lib/auth/storage'
 
@@ -65,6 +65,8 @@ export interface CommercialDocument {
   subtotal: MoneyAmount
   tax_total: MoneyAmount
   discount_total: MoneyAmount
+  /** Invoice stamp duty (timbre fiscal), already included in grand_total. */
+  stamp_duty: MoneyAmount
   grand_total: MoneyAmount
   amount_paid: MoneyAmount
   amount_due: MoneyAmount
@@ -72,8 +74,24 @@ export interface CommercialDocument {
   issued_at: string | null
   due_date: string | null
   notes: string | null
+  /** Set while the document has a public share link. */
+  share_token: string | null
   created_at: string
   lines: DocumentLine[]
+}
+
+/** What the public share page receives for a shared document. */
+export interface SharedDocumentSummary {
+  document_type: DocumentType
+  /** Printed title, e.g. "Facture". */
+  title: string
+  document_number: string | null
+  issued_at: string | null
+  due_date: string | null
+  customer_display_name: string
+  company_name: string | null
+  grand_total: MoneyAmount
+  filename: string
 }
 
 export interface ManualDocumentLineInput {
@@ -129,25 +147,81 @@ export const documentsApi = {
     return apiClient.post<CommercialDocument>(`/api/documents/${id}/cancel`, {}, token())
   },
 
+  /** Creates the public link, or keeps the existing one. */
+  share(id: string) {
+    return apiClient.post<CommercialDocument>(`/api/documents/${id}/share`, {}, token())
+  },
+
+  unshare(id: string) {
+    return apiClient.delete<CommercialDocument>(`/api/documents/${id}/share`, token())
+  },
+
+  /** Renders a new PDF version, e.g. after the company details in Settings changed. */
+  regeneratePdf(id: string) {
+    return apiClient.post<CommercialDocument>(`/api/documents/${id}/pdf`, {}, token())
+  },
+
   /** Fetches the PDF with the bearer token (a plain link cannot send it) and saves it. */
   async downloadPdf(document: { id: string; document_number?: string | null }) {
-    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/documents/${document.id}/download`, {
+    const response = await fetch(apiUrl(`/api/documents/${document.id}/download`), {
       headers: { Authorization: `Bearer ${token() ?? ''}` },
     })
 
     if (!response.ok) {
-      throw new Error(
-        response.status === 404 ? 'The PDF is still being generated. Try again in a moment.' : 'Download failed.',
-      )
+      throw new Error(await downloadError(response))
     }
 
-    const url = URL.createObjectURL(await response.blob())
-    const link = window.document.createElement('a')
-    link.href = url
-    link.download = `${document.document_number ?? document.id}.pdf`
-    link.click()
-    URL.revokeObjectURL(url)
+    saveBlob(
+      await response.blob(),
+      filenameFromDisposition(response.headers.get('Content-Disposition')) ?? `${document.document_number ?? document.id}.pdf`,
+    )
   },
+}
+
+/** Share links work without signing in; the token in the URL is the credential. */
+export const sharedDocumentsApi = {
+  get(token: string) {
+    return apiClient.get<SharedDocumentSummary>(`/api/public/documents/${encodeURIComponent(token)}`)
+  },
+
+  pdfUrl(token: string, download = false) {
+    return apiUrl(`/api/public/documents/${encodeURIComponent(token)}/pdf${download ? '?download=1' : ''}`)
+  },
+
+  previewUrl(token: string) {
+    return apiUrl(`/api/public/documents/${encodeURIComponent(token)}/preview`)
+  },
+
+  /** The page customers open, served by this app (see SharedDocumentPage). */
+  pageUrl(token: string) {
+    return `${window.location.origin}/share/${encodeURIComponent(token)}`
+  },
+}
+
+async function downloadError(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: { message?: string } }
+    if (body.error?.message) return body.error.message
+  } catch {
+    // Not a JSON error body.
+  }
+  return response.status === 401 ? 'Your session expired. Sign in again to download.' : 'Download failed.'
+}
+
+/** Reads `filename="…"` from a Content-Disposition header. */
+export function filenameFromDisposition(header: string | null): string | null {
+  const match = header ? /filename="?([^";]+)"?/i.exec(header) : null
+  return match ? match[1] : null
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = window.document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  // Revoking right away can cancel the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 /**

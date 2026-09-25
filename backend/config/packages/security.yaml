@@ -28,6 +28,8 @@ security:
         - { path: ^/api/doc(\.json)?$, roles: PUBLIC_ACCESS }
         # Uploaded product pictures, loaded by <img> tags that cannot send a bearer token.
         - { path: ^/api/media/, roles: PUBLIC_ACCESS, methods: [GET] }
+        # Share links for issued documents; the random token in the URL is the credential.
+        - { path: ^/api/public/, roles: PUBLIC_ACCESS, methods: [GET] }
         - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
 
 when@test:

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { ArrowRightIcon, FileTextIcon, PackageIcon, TruckIcon, WalletIcon } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
+import { DocumentPdfButton } from '@/components/DocumentPdfButton'
 import { MoneyText } from '@/components/MoneyText'
 import { QueryState } from '@/components/QueryState'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -13,7 +14,6 @@ import { ProductCard } from '@/features/portal/components/ProductCard'
 import { useCart } from '@/features/portal/context/CartContext'
 import { catalogApi } from '@/lib/api/catalog'
 import { dashboardApi } from '@/lib/api/dashboard'
-import { invoicesApi } from '@/lib/api/finance'
 import { formatDate, formatQuantity } from '@/lib/format'
 
 export function PortalHomePage() {
@@ -169,15 +169,14 @@ export function PortalHomePage() {
                       </span>
                       <StatusBadge status={invoice.status} />
                       {invoice.is_posted ? (
-                        <a
-                          href={invoicesApi.downloadUrl(invoice.id)}
-                          target="_blank"
-                          rel="noreferrer"
-                          className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}
+                        <DocumentPdfButton
+                          document={invoice}
+                          variant="ghost"
+                          size="icon-sm"
                           aria-label={`Download invoice ${invoice.document_number ?? ''} PDF`}
                         >
                           <FileTextIcon />
-                        </a>
+                        </DocumentPdfButton>
                       ) : null}
                     </li>
                   ))}

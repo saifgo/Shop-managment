@@ -6,6 +6,7 @@ namespace App\Application\Documents;
 
 use App\Application\Catalog\PricingService;
 use App\Application\Documents\Message\GenerateDocumentPdf;
+use App\Application\Settings\CompanyProfileService;
 use App\Application\Settings\TaxSettingsService;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Documents\DocumentRelationType;
@@ -19,7 +20,6 @@ use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Customer\Customer;
 use App\Infrastructure\Persistence\Entity\Customer\PortalUser;
 use App\Infrastructure\Persistence\Entity\Documents\CommercialDocument;
-use App\Infrastructure\Persistence\Entity\Documents\DocumentFile;
 use App\Infrastructure\Persistence\Entity\Documents\DocumentLine;
 use App\Infrastructure\Persistence\Entity\Documents\DocumentRelation;
 use App\Infrastructure\Persistence\Entity\Identity\User;
@@ -28,7 +28,6 @@ use App\Infrastructure\Persistence\Entity\Sales\DeliveryLine;
 use App\Infrastructure\Persistence\Entity\Sales\Order;
 use App\Infrastructure\Persistence\Entity\Sales\OrderItem;
 use App\Infrastructure\Persistence\UnitOfWork;
-use App\Infrastructure\Storage\DocumentStorage;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
@@ -43,10 +42,11 @@ final class DocumentService
         private UnitOfWork $unitOfWork,
         private DocumentNumberService $documentNumberService,
         private DocumentSnapshotBuilder $snapshotBuilder,
-        private DocumentStorage $documentStorage,
+        private DocumentPdfService $documentPdfService,
         private MessageBusInterface $messageBus,
         private PricingService $pricingService,
         private TaxSettingsService $taxSettingsService,
+        private CompanyProfileService $companyProfileService,
     ) {
     }
 
@@ -158,6 +158,7 @@ final class DocumentService
 
             $snapshot = $this->snapshotBuilder->customerSnapshot($customer);
             $totals = DocumentSnapshotBuilder::totalsFromLines($linePayloads, $currency);
+            $stampDuty = $this->companyProfileService->stampDutyFor($user->companyId(), $currency);
 
             $document = new CommercialDocument(
                 id: EntityId::generate(),
@@ -175,12 +176,13 @@ final class DocumentService
                 subtotal: $totals['subtotal'],
                 taxTotal: $totals['tax_total'],
                 discountTotal: $totals['discount_total'],
-                grandTotal: $totals['grand_total'],
+                grandTotal: $totals['grand_total']->add($stampDuty),
                 order: $orderRef,
                 delivery: $deliveryRef,
                 notes: $payload['notes'] ?? null,
                 idempotencyKey: $idempotencyKey,
                 createdBy: EntityId::fromString($user->getId()),
+                stampDuty: $stampDuty,
             );
 
             $this->persistDocumentLines($document, $linePayloads);
@@ -282,6 +284,7 @@ final class DocumentService
                 notes: $reason,
                 idempotencyKey: $idempotencyKey,
                 createdBy: EntityId::fromString($user->getId()),
+                stampDuty: $invoice->getStampDuty(),
             );
 
             $this->persistDocumentLines($document, $linePayloads);
@@ -357,6 +360,9 @@ final class DocumentService
 
             $snapshot = $this->snapshotBuilder->customerSnapshot($customer);
             $totals = DocumentSnapshotBuilder::totalsFromLines($linePayloads, $currency);
+            $stampDuty = $type === DocumentType::Invoice
+                ? $this->companyProfileService->stampDutyFor($user->companyId(), $currency)
+                : Money::zero($currency);
 
             $document = new CommercialDocument(
                 id: EntityId::generate(),
@@ -374,11 +380,12 @@ final class DocumentService
                 subtotal: $totals['subtotal'],
                 taxTotal: $totals['tax_total'],
                 discountTotal: $totals['discount_total'],
-                grandTotal: $totals['grand_total'],
+                grandTotal: $totals['grand_total']->add($stampDuty),
                 order: $order,
                 notes: $payload['notes'] ?? null,
                 idempotencyKey: $idempotencyKey,
                 createdBy: EntityId::fromString($user->getId()),
+                stampDuty: $stampDuty,
             );
 
             $this->persistDocumentLines($document, $linePayloads);
@@ -496,31 +503,106 @@ final class DocumentService
             throw new NotFoundHttpException('Document not found.');
         }
 
-        /** @var DocumentFile|null $file */
-        $file = $this->entityManager->createQueryBuilder()
-            ->select('f')
-            ->from(DocumentFile::class, 'f')
-            ->where('f.document = :document')
-            ->setParameter('document', $document)
-            ->orderBy('f.version', 'DESC')
-            ->setMaxResults(1)
-            ->getQuery()
-            ->getOneOrNullResult();
+        return [
+            'content' => $this->documentPdfService->latest($document),
+            'mime_type' => DocumentPdfService::MIME_TYPE,
+            'filename' => DocumentPdfService::filename($document),
+        ];
+    }
 
-        if ($file === null) {
-            throw new NotFoundHttpException('PDF not yet generated.');
+    /**
+     * Renders a new PDF version, e.g. after the company details printed on documents changed.
+     *
+     * @return array<string, mixed>
+     */
+    public function regeneratePdf(User $user, string $documentId): array
+    {
+        $document = $this->findDocument($user, $documentId);
+
+        if (!$document->isPosted()) {
+            throw new BadRequestHttpException('Drafts have no stored PDF; issue the document first.');
         }
 
-        $content = $this->documentStorage->read($file->getStorageKey());
+        $this->documentPdfService->generate($document);
 
-        if ($content === null) {
-            throw new NotFoundHttpException('PDF file missing from storage.');
+        return $this->snapshotBuilder->serializeDocument($document);
+    }
+
+    /**
+     * Turns on the public link (/share/{token}) that lets anyone holding it view and
+     * download the document without signing in. Sharing an already shared document
+     * keeps its current link.
+     *
+     * @return array<string, mixed>
+     */
+    public function share(User $user, string $documentId): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $documentId): array {
+            $document = $this->findDocument($user, $documentId);
+
+            if (!$document->isPosted()) {
+                throw new BadRequestHttpException('Issue the document before sharing it.');
+            }
+
+            if ($document->getShareToken() === null) {
+                // 24 random bytes = 192 bits, URL-safe base64 without padding (32 characters).
+                $document->enableSharing(rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '='));
+            }
+
+            return $this->snapshotBuilder->serializeDocument($document);
+        });
+    }
+
+    /**
+     * Revokes the public link; sharing again later creates a new one.
+     *
+     * @return array<string, mixed>
+     */
+    public function unshare(User $user, string $documentId): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $documentId): array {
+            $document = $this->findDocument($user, $documentId);
+            $document->disableSharing();
+
+            return $this->snapshotBuilder->serializeDocument($document);
+        });
+    }
+
+    /** The document behind a public share link; the token itself is the credential. */
+    public function findShared(string $token): CommercialDocument
+    {
+        /** @var CommercialDocument|null $document */
+        $document = $token === '' ? null : $this->entityManager->getRepository(CommercialDocument::class)->findOneBy([
+            'shareToken' => $token,
+        ]);
+
+        if ($document === null || !$document->isPosted()) {
+            throw new NotFoundHttpException('This link is invalid or has been revoked.');
         }
+
+        return $document;
+    }
+
+    /**
+     * What the public share page shows around the document preview.
+     *
+     * @return array<string, mixed>
+     */
+    public function sharedSummary(string $token): array
+    {
+        $document = $this->findShared($token);
+        $currency = $document->getCurrency();
 
         return [
-            'content' => $content,
-            'mime_type' => $file->getMimeType(),
-            'filename' => ($document->getDocumentNumber() ?? $document->getId()).'.pdf',
+            'document_type' => $document->getDocumentType()->value,
+            'title' => $document->getDocumentType()->printedTitle(),
+            'document_number' => $document->getDocumentNumber(),
+            'issued_at' => $document->getIssuedAt()?->format(DATE_ATOM),
+            'due_date' => $document->getDueDate()?->format('Y-m-d'),
+            'customer_display_name' => $document->getCustomerDisplayName(),
+            'company_name' => $this->companyProfileService->profile($document->companyId())->name,
+            'grand_total' => ['amount' => $document->getGrandTotal()->amount(), 'currency' => $currency],
+            'filename' => DocumentPdfService::filename($document),
         ];
     }
 

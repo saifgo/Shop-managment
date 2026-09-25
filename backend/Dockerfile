@@ -1,13 +1,20 @@
 FROM php:8.4-fpm-bookworm AS base
 
+# gd lets dompdf embed PNG/JPEG images (the company stamp) in generated PDFs;
+# Carlito is a Calibri-compatible font used by the document template.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     unzip \
     libpq-dev \
     libzip-dev \
     libicu-dev \
+    libpng-dev \
+    libjpeg62-turbo-dev \
+    libfreetype6-dev \
+    fonts-crosextra-carlito \
     curl \
-    && docker-php-ext-install pdo_pgsql opcache zip bcmath intl \
+    && docker-php-ext-configure gd --with-jpeg --with-freetype \
+    && docker-php-ext-install pdo_pgsql opcache zip bcmath intl gd \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && rm -rf /var/lib/apt/lists/* /tmp/pear

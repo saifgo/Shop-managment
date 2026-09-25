@@ -37,12 +37,16 @@ import { AdminReportsPage } from '@/features/admin/pages/AdminReportsPage'
 import { AdminSettingsPage } from '@/features/admin/pages/AdminSettingsPage'
 import { PortalInvoicesPage } from '@/features/finance/FinancePanels'
 import { PortalReturnsPage } from '@/features/portal/pages/PortalReturnsPage'
+import { SharedDocumentPage } from '@/features/share/SharedDocumentPage'
 import { PERMISSIONS } from '@/lib/auth/permissions'
 
 export function AppRouter() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/portal" replace />} />
+
+      {/* Public share links for documents; no sign-in. */}
+      <Route path="/share/:token" element={<SharedDocumentPage />} />
 
       <Route
         path="/portal/login"

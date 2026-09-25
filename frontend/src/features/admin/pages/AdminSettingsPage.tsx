@@ -8,7 +8,14 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
 import { Spinner } from '@/components/ui/spinner'
-import { formatTaxRate, settingsApi, TAX_SETTINGS_QUERY_KEY, type TaxSettings } from '@/lib/api/settings'
+import { CompanyProfileCard } from '@/features/admin/settings/CompanyProfileCard'
+import {
+  COMPANY_PROFILE_QUERY_KEY,
+  formatTaxRate,
+  settingsApi,
+  TAX_SETTINGS_QUERY_KEY,
+  type TaxSettings,
+} from '@/lib/api/settings'
 
 const PERCENT = /^\d+(\.\d{1,4})?$/
 
@@ -82,10 +89,14 @@ function TaxRateForm({ settings }: { settings: TaxSettings }) {
 
 export function AdminSettingsPage() {
   const { data, isLoading, error } = useQuery({ queryKey: TAX_SETTINGS_QUERY_KEY, queryFn: settingsApi.getTax })
+  const company = useQuery({ queryKey: COMPANY_PROFILE_QUERY_KEY, queryFn: settingsApi.getCompany })
 
   return (
     <section className="flex flex-col gap-6">
       <PageHeader title="Settings" description="Company-wide defaults." />
+      <QueryState isLoading={company.isLoading} error={company.error}>
+        {company.data ? <CompanyProfileCard profile={company.data} /> : null}
+      </QueryState>
       <QueryState isLoading={isLoading} error={error}>
         {data ? <TaxRateForm key={data.default_tax_rate} settings={data} /> : null}
       </QueryState>

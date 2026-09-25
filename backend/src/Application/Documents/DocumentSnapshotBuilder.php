@@ -135,6 +135,7 @@ final class DocumentSnapshotBuilder
             'subtotal' => ['amount' => $document->getSubtotal()->amount(), 'currency' => $document->getCurrency()],
             'tax_total' => ['amount' => $document->getTaxTotal()->amount(), 'currency' => $document->getCurrency()],
             'discount_total' => ['amount' => $document->getDiscountTotal()->amount(), 'currency' => $document->getCurrency()],
+            'stamp_duty' => ['amount' => $document->getStampDuty()->amount(), 'currency' => $document->getCurrency()],
             'grand_total' => ['amount' => $document->getGrandTotal()->amount(), 'currency' => $document->getCurrency()],
             'amount_paid' => ['amount' => $document->getAmountPaid()->amount(), 'currency' => $document->getCurrency()],
             'amount_due' => ['amount' => $document->getAmountDue()->amount(), 'currency' => $document->getCurrency()],
@@ -143,6 +144,7 @@ final class DocumentSnapshotBuilder
             'issued_at' => $document->getIssuedAt()?->format(DATE_ATOM),
             'due_date' => $document->getDueDate()?->format('Y-m-d'),
             'notes' => $document->getNotes(),
+            'share_token' => $document->getShareToken(),
             'created_at' => $document->getCreatedAt()->format(DATE_ATOM),
             'lines' => $lines,
         ];

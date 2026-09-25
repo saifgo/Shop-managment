@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { DownloadIcon } from 'lucide-react'
+import { DownloadIcon, InfoIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmAction } from '@/components/ConfirmAction'
 import { MoneyText } from '@/components/MoneyText'
@@ -9,13 +9,16 @@ import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
 import { StatusBadge } from '@/components/StatusBadge'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { DocumentShareDialog } from '@/features/admin/documents/DocumentShareDialog'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { documentsApi, documentTypeLabel, type CommercialDocument } from '@/lib/api/documents'
+import { COMPANY_PROFILE_QUERY_KEY, settingsApi } from '@/lib/api/settings'
 import { PERMISSIONS } from '@/lib/auth/permissions'
 
 export function AdminDocumentDetailPage() {
@@ -50,8 +53,23 @@ export function AdminDocumentDetailPage() {
     mutationFn: (doc: CommercialDocument) => documentsApi.downloadPdf(doc),
     onError: (err) => toast.error(err.message),
   })
+  const regenerate = useMutation({
+    mutationFn: () => documentsApi.regeneratePdf(id!),
+    onSuccess: (updated) => {
+      onChanged(updated)
+      toast.success('PDF regenerated with the current company details.')
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
+  const { data: company } = useQuery({
+    queryKey: COMPANY_PROFILE_QUERY_KEY,
+    queryFn: settingsApi.getCompany,
+    enabled: Boolean(document?.is_posted),
+  })
 
   const isDraft = document ? !document.is_posted && document.status !== 'CANCELLED' : false
+  const canManage = can(PERMISSIONS.documentsManage)
 
   return (
     <section className="flex flex-col gap-6">
@@ -71,8 +89,11 @@ export function AdminDocumentDetailPage() {
                   {document.is_posted ? (
                     <Button variant="outline" disabled={download.isPending} onClick={() => download.mutate(document)}>
                       {download.isPending ? <Spinner data-icon="inline-start" /> : <DownloadIcon data-icon="inline-start" />}
-                      PDF
+                      Download PDF
                     </Button>
+                  ) : null}
+                  {document.is_posted && canManage ? (
+                    <DocumentShareDialog document={document} onChanged={onChanged} />
                   ) : null}
                   {isDraft && can(PERMISSIONS.documentsCancel) ? (
                     <ConfirmAction
@@ -87,7 +108,7 @@ export function AdminDocumentDetailPage() {
                       }}
                     />
                   ) : null}
-                  {isDraft && can(PERMISSIONS.documentsManage) ? (
+                  {isDraft && canManage ? (
                     <Button disabled={issue.isPending} onClick={() => issue.mutate()}>
                       {issue.isPending ? <Spinner data-icon="inline-start" /> : null}
                       Issue
@@ -97,7 +118,23 @@ export function AdminDocumentDetailPage() {
               }
             />
 
-            {isDraft && document.document_type === 'INVOICE' && can(PERMISSIONS.documentsManage) ? (
+            {document.is_posted && company && !company.name ? (
+              <Alert>
+                <InfoIcon />
+                <AlertTitle>Your company details are missing from the PDF</AlertTitle>
+                <AlertDescription>
+                  <p>
+                    Add your name, phone, tax ID and payment account in{' '}
+                    <Link to="/admin/settings" className="underline underline-offset-4">
+                      Settings
+                    </Link>
+                    {canManage ? ', then regenerate this PDF from the details below.' : '.'}
+                  </p>
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {isDraft && document.document_type === 'INVOICE' && canManage ? (
               <div className="flex max-w-xs flex-col gap-2">
                 <Label htmlFor="issue-due-date">Due date when issued</Label>
                 <Input id="issue-due-date" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
@@ -144,6 +181,23 @@ export function AdminDocumentDetailPage() {
                         <dd className="whitespace-pre-line">{document.notes}</dd>
                       </>
                     ) : null}
+                    {document.is_posted && canManage ? (
+                      <>
+                        <dt className="text-muted-foreground">PDF</dt>
+                        <dd>
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0"
+                            disabled={regenerate.isPending}
+                            onClick={() => regenerate.mutate()}
+                          >
+                            {regenerate.isPending ? <Spinner data-icon="inline-start" /> : null}
+                            Regenerate with current company details
+                          </Button>
+                        </dd>
+                      </>
+                    ) : null}
                   </dl>
                 </CardContent>
               </Card>
@@ -157,6 +211,9 @@ export function AdminDocumentDetailPage() {
                     <MoneyRow label="Subtotal" money={document.subtotal} />
                     <MoneyRow label="Discount" money={document.discount_total} />
                     <MoneyRow label="Tax" money={document.tax_total} />
+                    {Number(document.stamp_duty.amount) > 0 ? (
+                      <MoneyRow label="Stamp duty (timbre)" money={document.stamp_duty} />
+                    ) : null}
                     <MoneyRow label="Total" money={document.grand_total} strong />
                     {document.document_type === 'INVOICE' && document.is_posted ? (
                       <>

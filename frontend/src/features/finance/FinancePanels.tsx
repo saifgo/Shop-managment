@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { DocumentPdfButton } from '@/components/DocumentPdfButton'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
@@ -57,9 +58,9 @@ export function PortalInvoicesPage() {
               header: 'Document',
               cell: (invoice) =>
                 invoice.is_posted ? (
-                  <a href={invoicesApi.downloadUrl(invoice.id)} target="_blank" rel="noreferrer">
+                  <DocumentPdfButton document={invoice} variant="link" size="sm" className="h-auto p-0">
                     Download PDF
-                  </a>
+                  </DocumentPdfButton>
                 ) : (
                   '—'
                 ),
