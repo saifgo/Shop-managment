@@ -1,3 +1,6 @@
+import { apiClient } from '@/lib/api/client'
+import { getAccessToken } from '@/lib/auth/storage'
+
 export interface StockRow {
   variant_id: string
   product_name: string
@@ -26,6 +29,19 @@ export interface StockMovement {
   reference?: string | null
   notes?: string | null
   created_at: string
+}
+
+export interface VariantAvailability {
+  physical_on_hand: string
+  reserved: string
+  available_to_sell: string
+  confirmed_demand: string
+  net_production_demand: string
+}
+
+export interface StockAdjustmentResult {
+  adjustment_id: string
+  movement: StockMovement
 }
 
 export interface Paginated<T> {
@@ -67,5 +83,24 @@ export const inventoryApi = {
       if (!response.ok) throw new Error('Failed to load movements')
       return (await response.json()) as Paginated<StockMovement>
     })
+  },
+
+  availability(variantId: string, locationId?: string) {
+    const params = new URLSearchParams({ variant_id: variantId })
+    if (locationId) params.set('location_id', locationId)
+
+    return apiClient.get<VariantAvailability>(
+      `/api/inventory/availability?${params}`,
+      getAccessToken() ?? undefined,
+    )
+  },
+
+  /** Positive delta adds stock, negative removes it. Location defaults to the company's default location. */
+  adjust(payload: { variant_id: string; quantity_delta: string; reason: string; location_id?: string }) {
+    return apiClient.post<StockAdjustmentResult>(
+      '/api/inventory/adjustments',
+      payload,
+      getAccessToken() ?? undefined,
+    )
   },
 }

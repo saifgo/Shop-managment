@@ -152,30 +152,52 @@ final class InventoryService
     public function createAdjustment(
         User $user,
         string $variantId,
-        string $locationId,
+        ?string $locationId,
         string $quantityDelta,
         string $reason,
     ): array {
         return $this->unitOfWork->transactional(function () use ($user, $variantId, $locationId, $quantityDelta, $reason): array {
             $variant = $this->findVariant($user, $variantId);
-            $location = $this->findLocation($user, $locationId);
+            $location = $locationId !== null && $locationId !== ''
+                ? $this->findLocation($user, $locationId)
+                : $this->availabilityService->resolveDefaultLocation($user->companyId());
+
+            if ($location === null) {
+                throw new BadRequestHttpException('No stock location configured.');
+            }
+
+            $quantityDelta = trim($quantityDelta);
             if (!preg_match('/^-?\d+(\.\d{1,4})?$/', $quantityDelta)) {
                 throw new BadRequestHttpException('Invalid quantity delta.');
             }
 
-            $movement = $this->stockLedgerService->postMovement(
-                companyId: $user->companyId(),
-                variant: $variant,
-                location: $location,
-                movementType: StockMovementType::Adjustment,
-                quantityDelta: $quantityDelta,
-                reservedDelta: '0.0000',
-                sourceType: 'stock_adjustment',
-                sourceId: EntityId::generate(),
-                reference: null,
-                notes: $reason,
-                createdBy: EntityId::fromString($user->getId()),
-            );
+            if (bccomp($quantityDelta, '0', 4) === 0) {
+                throw new BadRequestHttpException('Quantity delta cannot be zero.');
+            }
+
+            $reason = trim($reason);
+            if ($reason === '') {
+                throw new BadRequestHttpException('A reason is required.');
+            }
+
+            try {
+                $movement = $this->stockLedgerService->postMovement(
+                    companyId: $user->companyId(),
+                    variant: $variant,
+                    location: $location,
+                    movementType: StockMovementType::Adjustment,
+                    quantityDelta: $quantityDelta,
+                    reservedDelta: '0.0000',
+                    sourceType: 'stock_adjustment',
+                    sourceId: EntityId::generate(),
+                    reference: null,
+                    notes: $reason,
+                    createdBy: EntityId::fromString($user->getId()),
+                );
+            } catch (\DomainException $exception) {
+                // e.g. removing more than is on hand, or dropping below what is reserved for orders.
+                throw new BadRequestHttpException($exception->getMessage(), $exception);
+            }
 
             $adjustment = new StockAdjustment(
                 EntityId::generate(),
@@ -193,7 +215,7 @@ final class InventoryService
                 action: 'inventory.adjustment.created',
                 payload: [
                     'variant_id' => $variantId,
-                    'location_id' => $locationId,
+                    'location_id' => $location->getId(),
                     'quantity_delta' => $quantityDelta,
                     'reason' => $reason,
                     'movement_id' => $movement->getId(),

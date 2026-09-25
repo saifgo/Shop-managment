@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { SlidersHorizontalIcon } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable, type ResponsiveTableColumn } from '@/components/ResponsiveTable'
@@ -7,7 +8,13 @@ import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import {
+  StockAdjustmentDialog,
+  type AdjustmentTarget,
+} from '@/features/admin/components/StockAdjustmentDialog'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 import { inventoryApi, type StockMovement, type StockRow } from '@/lib/api/inventory'
+import { PERMISSIONS } from '@/lib/auth/permissions'
 
 const stockColumns: ResponsiveTableColumn<StockRow>[] = [
   {
@@ -102,6 +109,15 @@ const movementColumns: ResponsiveTableColumn<StockMovement>[] = [
 export function AdminInventoryPage() {
   const [variantFilter, setVariantFilter] = useState('')
   const [selectedVariant, setSelectedVariant] = useState<string | undefined>()
+  const [adjustOpen, setAdjustOpen] = useState(false)
+  const [adjustTarget, setAdjustTarget] = useState<AdjustmentTarget | null>(null)
+  const { can } = useAuth()
+  const canAdjust = can(PERMISSIONS.inventoryAdjust)
+
+  const openAdjust = (target: AdjustmentTarget | null = null) => {
+    setAdjustTarget(target)
+    setAdjustOpen(true)
+  }
 
   const { data: stock, isLoading: stockLoading, error: stockError } = useQuery({
     queryKey: ['admin', 'inventory', 'stock'],
@@ -124,6 +140,14 @@ export function AdminInventoryPage() {
       <PageHeader
         title="Inventory"
         description="Stock balances and immutable movement ledger."
+        action={
+          canAdjust ? (
+            <Button onClick={() => openAdjust()}>
+              <SlidersHorizontalIcon data-icon="inline-start" />
+              Adjust stock
+            </Button>
+          ) : null
+        }
       />
 
       <div className="flex flex-col gap-4">
@@ -160,14 +184,33 @@ export function AdminInventoryPage() {
               columns={stockColumns}
               getRowKey={(row) => `${row.variant_id}-${row.location_id}`}
               rowAction={(row) => (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedVariant(row.variant_id)}
-                >
-                  Ledger
-                </Button>
+                <div className="flex gap-1">
+                  {canAdjust ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        openAdjust({
+                          variant_id: row.variant_id,
+                          label: `${row.product_name} — ${row.variant_name}`,
+                          sku: row.sku,
+                          location_id: row.location_id,
+                        })
+                      }
+                    >
+                      Adjust
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedVariant(row.variant_id)}
+                  >
+                    Ledger
+                  </Button>
+                </div>
               )}
             />
           ) : null}
@@ -177,9 +220,16 @@ export function AdminInventoryPage() {
       <Separator />
 
       <div className="flex flex-col gap-4">
-        <h2 className="font-heading text-lg font-medium">
-          Movement ledger{selectedVariant ? ' (filtered)' : ''}
-        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-heading text-lg font-medium">
+            Movement ledger{selectedVariant ? ' (filtered)' : ''}
+          </h2>
+          {selectedVariant ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedVariant(undefined)}>
+              Show all
+            </Button>
+          ) : null}
+        </div>
 
         <QueryState
           isLoading={movementsLoading}
@@ -198,6 +248,8 @@ export function AdminInventoryPage() {
           ) : null}
         </QueryState>
       </div>
+
+      <StockAdjustmentDialog open={adjustOpen} onOpenChange={setAdjustOpen} target={adjustTarget} />
     </section>
   )
 }

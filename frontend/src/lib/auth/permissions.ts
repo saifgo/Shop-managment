@@ -4,6 +4,7 @@ export const PERMISSIONS = {
   salesOrdersView: 'sales.orders.view',
   salesOrdersManage: 'sales.orders.manage',
   inventoryView: 'inventory.view',
+  inventoryAdjust: 'inventory.adjust',
   productionView: 'production.view',
   productionManage: 'production.manage',
   customersView: 'customers.view',

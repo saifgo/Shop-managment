@@ -24,6 +24,48 @@ final class ProductionTest extends AuthenticatedApiTestCase
         self::assertSame('1.0000', $updated['stages'][0]['loss_quantity']);
     }
 
+    public function testProductionListIncludesCreatedOrders(): void
+    {
+        $admin = $this->login();
+        $variantId = $this->findVariantIdBySku($admin['access_token'], 'TAG-M');
+        $production = $this->createProduction($admin['access_token'], $variantId, '3.0000');
+
+        $client = static::createClient();
+        $client->request(
+            'GET',
+            '/api/productions?page=1',
+            server: ['HTTP_AUTHORIZATION' => 'Bearer '.$admin['access_token']],
+        );
+        self::assertResponseIsSuccessful();
+        $list = json_decode($client->getResponse()->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
+
+        self::assertGreaterThanOrEqual(1, $list['meta']['total']);
+        self::assertContains($production['id'], array_column($list['items'], 'id'));
+    }
+
+    public function testCreateProductionRejectsInvalidQuantity(): void
+    {
+        $admin = $this->login();
+        $variantId = $this->findVariantIdBySku($admin['access_token'], 'TAG-M');
+
+        foreach (['0', 'abc', '-2'] as $quantity) {
+            $client = static::createClient();
+            $client->request(
+                'POST',
+                '/api/productions',
+                server: [
+                    'HTTP_AUTHORIZATION' => 'Bearer '.$admin['access_token'],
+                    'CONTENT_TYPE' => 'application/json',
+                ],
+                content: json_encode([
+                    'variant_id' => $variantId,
+                    'planned_quantity' => $quantity,
+                ], JSON_THROW_ON_ERROR),
+            );
+            self::assertResponseStatusCodeSame(400);
+        }
+    }
+
     public function testConcurrentProductionsCanRunIndependently(): void
     {
         $admin = $this->login();

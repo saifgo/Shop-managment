@@ -1,3 +1,6 @@
+import { apiClient } from '@/lib/api/client'
+import { getAccessToken } from '@/lib/auth/storage'
+
 export interface ProductionSummary {
   id: string
   reference: string
@@ -77,107 +80,57 @@ export interface Paginated<T> {
   }
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('tittawin.access_token') ?? undefined
-
-  return token ? { Authorization: `Bearer ${token}` } : {}
+function token(): string | undefined {
+  return getAccessToken() ?? undefined
 }
 
-function apiBase(): string {
-  return import.meta.env.VITE_API_BASE_URL ?? ''
+export interface CreateProductionPayload {
+  variant_id: string
+  planned_quantity: string
+  priority?: string
+  plan?: boolean
+  planned_due?: string
+  notes?: string
+  source_type?: string
+  source_id?: string
 }
 
 export const productionApi = {
   list(page = 1, status?: string) {
-    const params = new URLSearchParams({ page: String(page) })
+    const params = new URLSearchParams({ page: String(page), per_page: '100' })
     if (status) params.set('status', status)
 
-    return fetch(`${apiBase()}/api/productions?${params}`, {
-      headers: { Accept: 'application/json', ...authHeaders() },
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load productions')
-      return (await response.json()) as Paginated<ProductionSummary>
-    })
+    return apiClient.get<Paginated<ProductionSummary>>(`/api/productions?${params}`, token())
   },
 
   get(id: string) {
-    return fetch(`${apiBase()}/api/productions/${id}`, {
-      headers: { Accept: 'application/json', ...authHeaders() },
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load production')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.get<ProductionDetail>(`/api/productions/${id}`, token())
   },
 
-  create(payload: {
-    variant_id: string
-    planned_quantity: string
-    priority?: string
-    plan?: boolean
-    notes?: string
-  }) {
-    return fetch(`${apiBase()}/api/productions`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify(payload),
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to create production')
-      return (await response.json()) as ProductionDetail
+  create(payload: CreateProductionPayload) {
+    return apiClient.post<ProductionDetail>('/api/productions', payload, token(), {
+      'Idempotency-Key': crypto.randomUUID(),
     })
   },
 
   start(id: string) {
-    return fetch(`${apiBase()}/api/productions/${id}/start`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', ...authHeaders() },
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to start production')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.post<ProductionDetail>(`/api/productions/${id}/start`, undefined, token())
   },
 
   pause(id: string) {
-    return fetch(`${apiBase()}/api/productions/${id}/pause`, {
-      method: 'POST',
-      headers: { Accept: 'application/json', ...authHeaders() },
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to pause production')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.post<ProductionDetail>(`/api/productions/${id}/pause`, undefined, token())
   },
 
   cancel(id: string, reason?: string) {
-    return fetch(`${apiBase()}/api/productions/${id}/cancel`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({ reason }),
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to cancel production')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.post<ProductionDetail>(`/api/productions/${id}/cancel`, { reason }, token())
   },
 
   startStage(productionId: string, stageId: string, inputQuantity?: string) {
-    return fetch(`${apiBase()}/api/productions/${productionId}/stages/${stageId}/start`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify({ input_quantity: inputQuantity }),
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to start stage')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.post<ProductionDetail>(
+      `/api/productions/${productionId}/stages/${stageId}/start`,
+      { input_quantity: inputQuantity },
+      token(),
+    )
   },
 
   completeStage(
@@ -190,26 +143,14 @@ export const productionApi = {
       losses?: Array<{ reason_code?: string; quantity: string; notes?: string }>
     },
   ) {
-    return fetch(`${apiBase()}/api/productions/${productionId}/stages/${stageId}/complete`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        ...authHeaders(),
-      },
-      body: JSON.stringify(payload),
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to complete stage')
-      return (await response.json()) as ProductionDetail
-    })
+    return apiClient.post<ProductionDetail>(
+      `/api/productions/${productionId}/stages/${stageId}/complete`,
+      payload,
+      token(),
+    )
   },
 
   demand() {
-    return fetch(`${apiBase()}/api/production-demand`, {
-      headers: { Accept: 'application/json', ...authHeaders() },
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load production demand')
-      return (await response.json()) as { items: ProductionDemandRow[] }
-    })
+    return apiClient.get<{ items: ProductionDemandRow[] }>('/api/production-demand', token())
   },
 }

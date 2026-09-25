@@ -74,6 +74,7 @@ final class ProductionService
             }
 
             $variant = $this->findVariant($user, $payload['variant_id']);
+            $plannedQuantity = $this->parsePositiveQuantity($payload['planned_quantity'], 'planned_quantity');
             $reference = $this->generateReference($user->companyId());
             $priority = ProductionPriority::tryFrom(strtoupper($payload['priority'] ?? 'NORMAL')) ?? ProductionPriority::Normal;
 
@@ -83,10 +84,10 @@ final class ProductionService
                 reference: $reference,
                 priority: $priority,
                 sourceType: $payload['source_type'] ?? null,
-                sourceId: isset($payload['source_id']) ? EntityId::fromString($payload['source_id']) : null,
-                plannedStart: isset($payload['planned_start']) ? new \DateTimeImmutable($payload['planned_start']) : null,
-                plannedDue: isset($payload['planned_due']) ? new \DateTimeImmutable($payload['planned_due']) : null,
-                notes: $payload['notes'] ?? null,
+                sourceId: isset($payload['source_id']) && $payload['source_id'] !== '' ? EntityId::fromString($payload['source_id']) : null,
+                plannedStart: $this->parseOptionalDate($payload['planned_start'] ?? null, 'planned_start'),
+                plannedDue: $this->parseOptionalDate($payload['planned_due'] ?? null, 'planned_due'),
+                notes: ($payload['notes'] ?? null) !== '' ? ($payload['notes'] ?? null) : null,
                 createdBy: EntityId::fromString($user->getId()),
                 idempotencyKey: $idempotencyKey,
             );
@@ -95,7 +96,7 @@ final class ProductionService
                 EntityId::generate(),
                 $order,
                 $variant,
-                Quantity::of($payload['planned_quantity']),
+                $plannedQuantity,
             );
 
             if (($payload['plan'] ?? false) === true) {
@@ -250,7 +251,9 @@ final class ProductionService
         ?string $stageId = null,
     ): PaginatedResult {
         $qb = $this->entityManager->createQueryBuilder()
-            ->select('DISTINCT p', 'i', 'v')
+            // No DISTINCT: product_variants.attributes is a JSON column and PostgreSQL cannot
+            // compare json values. The fetch-join Paginator already de-duplicates root rows.
+            ->select('p', 'i', 'v')
             ->from(ProductionOrder::class, 'p')
             ->join('p.items', 'i')
             ->join('i.variant', 'v')
@@ -469,6 +472,34 @@ final class ProductionService
         }
 
         return $reason;
+    }
+
+    private function parsePositiveQuantity(string $amount, string $field): Quantity
+    {
+        try {
+            $quantity = Quantity::of(trim($amount));
+        } catch (\InvalidArgumentException) {
+            throw new BadRequestHttpException(sprintf('%s must be a positive number with up to 4 decimals.', $field));
+        }
+
+        if ($quantity->isZero()) {
+            throw new BadRequestHttpException(sprintf('%s must be greater than zero.', $field));
+        }
+
+        return $quantity;
+    }
+
+    private function parseOptionalDate(?string $value, string $field): ?\DateTimeImmutable
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            return new \DateTimeImmutable($value);
+        } catch (\Exception) {
+            throw new BadRequestHttpException(sprintf('%s is not a valid date.', $field));
+        }
     }
 
     private function generateReference(EntityId $companyId): string

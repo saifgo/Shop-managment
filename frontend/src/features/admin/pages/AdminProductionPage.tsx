@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { PlusIcon } from 'lucide-react'
+import { toast } from 'sonner'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
@@ -9,13 +11,28 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  CreateProductionDialog,
+  type ProductionPrefill,
+} from '@/features/admin/components/CreateProductionDialog'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 import { productionApi } from '@/lib/api/production'
+import { PERMISSIONS } from '@/lib/auth/permissions'
 
 type ProductionView = 'list' | 'board' | 'demand'
 
 export function AdminProductionPage() {
   const [view, setView] = useState<ProductionView>('list')
+  const [createOpen, setCreateOpen] = useState(false)
+  const [prefill, setPrefill] = useState<ProductionPrefill | null>(null)
   const queryClient = useQueryClient()
+  const { can } = useAuth()
+  const canManage = can(PERMISSIONS.productionManage)
+
+  const openCreate = (next: ProductionPrefill | null = null) => {
+    setPrefill(next)
+    setCreateOpen(true)
+  }
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['admin', 'productions'],
@@ -31,6 +48,7 @@ export function AdminProductionPage() {
   const startMutation = useMutation({
     mutationFn: (id: string) => productionApi.start(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin', 'productions'] }),
+    onError: (err) => toast.error(err.message),
   })
 
   const boardColumns = buildBoardColumns(data?.items ?? [])
@@ -40,19 +58,27 @@ export function AdminProductionPage() {
       <PageHeader
         title="Production"
         action={
-          <ToggleGroup
-            variant="outline"
-            spacing={0}
-            value={[view]}
-            onValueChange={(next) => {
-              if (next[0]) setView(next[0] as ProductionView)
-            }}
-            aria-label="Production view"
-          >
-            <ToggleGroupItem value="list">List</ToggleGroupItem>
-            <ToggleGroupItem value="board">Stage board</ToggleGroupItem>
-            <ToggleGroupItem value="demand">Demand planning</ToggleGroupItem>
-          </ToggleGroup>
+          <>
+            <ToggleGroup
+              variant="outline"
+              spacing={0}
+              value={[view]}
+              onValueChange={(next) => {
+                if (next[0]) setView(next[0] as ProductionView)
+              }}
+              aria-label="Production view"
+            >
+              <ToggleGroupItem value="list">List</ToggleGroupItem>
+              <ToggleGroupItem value="board">Stage board</ToggleGroupItem>
+              <ToggleGroupItem value="demand">Demand planning</ToggleGroupItem>
+            </ToggleGroup>
+            {canManage ? (
+              <Button onClick={() => openCreate()}>
+                <PlusIcon data-icon="inline-start" />
+                New production
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -63,6 +89,14 @@ export function AdminProductionPage() {
           isEmpty={data?.items.length === 0}
           emptyTitle="No production orders yet"
           emptyDescription="Create a production order to start tracking stages."
+          emptyAction={
+            canManage ? (
+              <Button onClick={() => openCreate()}>
+                <PlusIcon data-icon="inline-start" />
+                New production
+              </Button>
+            ) : undefined
+          }
         >
           {data ? (
             <ResponsiveTable
@@ -103,14 +137,16 @@ export function AdminProductionPage() {
                 },
               ]}
               rowAction={(production) =>
-                production.status === 'DRAFT' || production.status === 'PLANNED' ? (
+                canManage && (production.status === 'DRAFT' || production.status === 'PLANNED') ? (
                   <Button
                     variant="outline"
                     size="sm"
                     disabled={startMutation.isPending}
                     onClick={() => startMutation.mutate(production.id)}
                   >
-                    {startMutation.isPending ? <Spinner data-icon="inline-start" /> : null}
+                    {startMutation.isPending && startMutation.variables === production.id ? (
+                      <Spinner data-icon="inline-start" />
+                    ) : null}
                     Start
                   </Button>
                 ) : null
@@ -207,10 +243,30 @@ export function AdminProductionPage() {
                   cell: (row) => <span className="tabular-nums">{row.to_produce}</span>,
                 },
               ]}
+              rowAction={(row) =>
+                canManage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      openCreate({
+                        variant_id: row.variant_id,
+                        label: `${row.product_name} — ${row.variant_name}`,
+                        sku: row.sku,
+                        quantity: Number(row.to_produce) > 0 ? row.to_produce : undefined,
+                      })
+                    }
+                  >
+                    Produce
+                  </Button>
+                ) : null
+              }
             />
           ) : null}
         </QueryState>
       ) : null}
+
+      <CreateProductionDialog open={createOpen} onOpenChange={setCreateOpen} prefill={prefill} />
     </section>
   )
 }

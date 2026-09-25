@@ -130,6 +130,47 @@ final class CommerceInventoryTest extends AuthenticatedApiTestCase
         self::assertSame('3.0000', $stock['physical_on_hand']);
     }
 
+    public function testManualAdjustmentDefaultsLocationAndRejectsNegativeStock(): void
+    {
+        $admin = $this->login();
+        $variantId = $this->findVariantIdBySku($admin['access_token'], 'VAS-M');
+        $before = $this->getStockForVariant($admin['access_token'], $variantId);
+
+        $client = static::createClient();
+        $client->request(
+            'POST',
+            '/api/inventory/adjustments',
+            server: [
+                'HTTP_AUTHORIZATION' => 'Bearer '.$admin['access_token'],
+                'CONTENT_TYPE' => 'application/json',
+            ],
+            content: json_encode([
+                'variant_id' => $variantId,
+                'quantity_delta' => '2',
+                'reason' => 'Found in back room',
+            ], JSON_THROW_ON_ERROR),
+        );
+        self::assertResponseStatusCodeSame(201);
+
+        $after = $this->getStockForVariant($admin['access_token'], $variantId);
+        self::assertSame(bcadd($before['physical_on_hand'], '2', 4), $after['physical_on_hand']);
+
+        $client->request(
+            'POST',
+            '/api/inventory/adjustments',
+            server: [
+                'HTTP_AUTHORIZATION' => 'Bearer '.$admin['access_token'],
+                'CONTENT_TYPE' => 'application/json',
+            ],
+            content: json_encode([
+                'variant_id' => $variantId,
+                'quantity_delta' => '-100000',
+                'reason' => 'Too much',
+            ], JSON_THROW_ON_ERROR),
+        );
+        self::assertResponseStatusCodeSame(400);
+    }
+
     /**
      * @return array<string, mixed>
      */

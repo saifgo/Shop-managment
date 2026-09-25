@@ -105,13 +105,14 @@ final readonly class CreateAdjustmentRequest
         #[SerializedName('variant_id')]
         public string $variantId,
         #[Assert\NotBlank]
-        #[SerializedName('location_id')]
-        public string $locationId,
-        #[Assert\NotBlank]
         #[SerializedName('quantity_delta')]
         public string $quantityDelta,
         #[Assert\NotBlank]
+        #[Assert\Length(max: 255)]
         public string $reason,
+        /** Defaults to the company's default stock location when omitted. */
+        #[SerializedName('location_id')]
+        public ?string $locationId = null,
     ) {
     }
 }
