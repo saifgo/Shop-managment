@@ -22,11 +22,14 @@ vi.mock('@/lib/api/catalog', () => ({
           from_price: { amount: '249.0000', currency: 'TND' },
           primary_image_url: null,
           variant_count: 3,
+          available_quantity: '0.0000',
+          stock_status: 'out_of_stock',
         },
       ],
       meta: { page: 1, per_page: 24, total: 1, total_pages: 1 },
     }),
   },
+  flattenCategories: () => [],
   formatMoney: (value: { amount: string; currency: string } | null) =>
     value ? `${value.amount} ${value.currency}` : '—',
 }))
@@ -45,6 +48,7 @@ describe('PortalCatalogPage', () => {
 
     expect(await screen.findByText('Berber Tagine')).toBeInTheDocument()
     expect(screen.getByText(/249/)).toBeInTheDocument()
-    expect(screen.getByText('Backorders allowed')).toBeInTheDocument()
+    // Out of stock but backorderable pieces are offered as made to order.
+    expect(screen.getByText('Made to order')).toBeInTheDocument()
   })
 })

@@ -32,6 +32,7 @@ use App\Infrastructure\Storage\DocumentStorage;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\Messenger\MessageBusInterface;
 
@@ -139,6 +140,7 @@ final class DocumentService
 
             if (isset($payload['delivery_id'])) {
                 $delivery = $this->findDelivery($user, $payload['delivery_id']);
+                $this->assertDeliveryNotInvoiced($delivery);
                 $orderRef = $delivery->getOrder();
                 $linePayloads = $this->buildLinesFromDelivery($delivery, $orderRef->getCurrency());
                 $customer = $orderRef->getCustomer();
@@ -908,6 +910,32 @@ final class DocumentService
         }
 
         return $variant;
+    }
+
+    /** Guards against billing the same shipment twice; a cancelled or credited invoice frees the delivery again. */
+    private function assertDeliveryNotInvoiced(Delivery $delivery): void
+    {
+        /** @var CommercialDocument|null $existing */
+        $existing = $this->entityManager->createQueryBuilder()
+            ->select('d')
+            ->from(CommercialDocument::class, 'd')
+            ->where('d.delivery = :delivery')
+            ->andWhere('d.documentType = :type')
+            ->andWhere('d.status NOT IN (:closed)')
+            ->setParameter('delivery', $delivery)
+            ->setParameter('type', DocumentType::Invoice)
+            ->setParameter('closed', [InvoiceStatus::Cancelled->value, InvoiceStatus::Credited->value])
+            ->setMaxResults(1)
+            ->getQuery()
+            ->getOneOrNullResult();
+
+        if ($existing !== null) {
+            throw new ConflictHttpException(sprintf(
+                'Delivery %s is already invoiced (%s).',
+                $delivery->getReference(),
+                $existing->getDocumentNumber() ?? 'draft invoice',
+            ));
+        }
     }
 
     private function findDelivery(User $user, string $deliveryId): Delivery

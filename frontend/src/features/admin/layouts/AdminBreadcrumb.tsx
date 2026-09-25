@@ -10,8 +10,8 @@ import {
 } from '@/components/ui/breadcrumb'
 
 const SEGMENT_LABELS: Record<string, string> = {
-  admin: 'Admin',
-  catalog: 'Catalog',
+  admin: 'Dashboard',
+  catalog: 'Products',
   categories: 'Categories',
   orders: 'Orders',
   demand: 'Demand',
@@ -35,7 +35,8 @@ function labelForSegment(segment: string): string {
     return SEGMENT_LABELS[segment]
   }
 
-  if (/^[0-9a-f-]{8,}$/i.test(segment)) {
+  // Record ids are ULIDs (26 chars) or UUIDs.
+  if (/^[0-9a-z]{26}$/i.test(segment) || /^[0-9a-f-]{36}$/i.test(segment)) {
     return 'Detail'
   }
 
@@ -52,7 +53,7 @@ function buildCrumbs(pathname: string): Crumb[] {
   const segments = pathname.split('/').filter(Boolean)
 
   if (segments.length === 0) {
-    return [{ label: 'Admin', href: '/admin', isCurrent: true }]
+    return [{ label: 'Dashboard', href: '/admin', isCurrent: true }]
   }
 
   return segments.map((segment, index) => {

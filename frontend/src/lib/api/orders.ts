@@ -50,6 +50,7 @@ export interface OrderDetail extends OrderSummary {
   items: Array<{
     id: string
     variant_id: string
+    product_id: string
     product_name: string
     variant_name: string
     sku: string
@@ -57,7 +58,17 @@ export interface OrderDetail extends OrderSummary {
     quantity_reserved: string
     quantity_backordered: string
     quantity_delivered: string
+    /** Units already on deliveries that are not delivered yet. */
+    quantity_in_open_deliveries: string
+    /** Units that can still be put on a new delivery. */
+    quantity_deliverable: string
+    /** Delivered units not already claimed by a return request. */
+    quantity_returnable: string
     line_status: string
+    unit_price: MoneyAmount
+    tax_rate: string
+    line_subtotal: MoneyAmount
+    line_tax: MoneyAmount
     line_total: MoneyAmount
   }>
   status_history: Array<{
@@ -69,6 +80,7 @@ export interface OrderDetail extends OrderSummary {
   can_confirm: boolean
   can_cancel: boolean
   can_reserve: boolean
+  can_create_delivery?: boolean
 }
 
 export interface Paginated<T> {
@@ -154,11 +166,16 @@ export const ordersApi = {
     })
   },
 
-  listOrders(page = 1) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders?page=${page}`, {
+  listOrders(page = 1, filters: { status?: string; search?: string; customerId?: string; perPage?: number } = {}) {
+    const query = new URLSearchParams({ page: String(page) })
+    if (filters.status) query.set('status', filters.status)
+    if (filters.search) query.set('search', filters.search)
+    if (filters.customerId) query.set('customer_id', filters.customerId)
+    if (filters.perPage) query.set('per_page', String(filters.perPage))
+    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders?${query.toString()}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load orders')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load orders'))
       return (await response.json()) as Paginated<OrderSummary>
     })
   },
@@ -167,7 +184,7 @@ export const ordersApi = {
     return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load order')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load order'))
       return (await response.json()) as OrderDetail
     })
   },
@@ -188,7 +205,7 @@ export const ordersApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ reason }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Cancel failed')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Cancel failed'))
       return (await response.json()) as OrderDetail
     })
   },
@@ -198,7 +215,7 @@ export const ordersApi = {
       method: 'POST',
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Reserve failed')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Reserve failed'))
       return (await response.json()) as OrderDetail
     })
   },
@@ -209,7 +226,7 @@ export const demandApi = {
     return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-customer`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load demand')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load demand'))
       return (await response.json()) as { items: DemandRow[] }
     })
   },
@@ -218,7 +235,7 @@ export const demandApi = {
     return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-product`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load demand')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load demand'))
       return (await response.json()) as { items: DemandRow[] }
     })
   },

@@ -1,4 +1,5 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useAuth } from '@/features/auth/hooks/useAuth'
 
 export interface CartItem {
   variantId: string
@@ -7,6 +8,7 @@ export interface CartItem {
   variantName: string
   sku: string
   quantity: string
+  imageUrl?: string | null
 }
 
 interface CartContextValue {
@@ -20,50 +22,91 @@ interface CartContextValue {
 
 const CartContext = createContext<CartContextValue | null>(null)
 
-const STORAGE_KEY = 'tittawin.portal.cart'
+const STORAGE_PREFIX = 'tittawin.portal.cart'
 
-function readStorage(): CartItem[] {
+/** One cart per signed-in account, so a shared computer never shows someone else's cart. */
+function storageKey(userId: string | undefined): string | null {
+  return userId ? `${STORAGE_PREFIX}.${userId}` : null
+}
+
+function readStorage(key: string | null): CartItem[] {
+  if (!key) return []
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(key)
     return raw ? (JSON.parse(raw) as CartItem[]) : []
   } catch {
     return []
   }
 }
 
-export function CartProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<CartItem[]>(() => readStorage())
+function writeStorage(key: string | null, items: CartItem[]) {
+  if (!key) return
+  try {
+    localStorage.setItem(key, JSON.stringify(items))
+  } catch {
+    // Storage full or blocked: the cart still works for this page view.
+  }
+}
 
-  const persist = (next: CartItem[]) => {
-    setItems(next)
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
+export function CartProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth()
+  const key = storageKey(user?.id)
+  const [state, setState] = useState(() => ({ key, items: readStorage(key) }))
+
+  // Signing in as someone else swaps to that account's cart (state adjusted during render,
+  // so the rest of the app is not remounted).
+  if (state.key !== key) {
+    setState({ key, items: readStorage(key) })
   }
 
-  const value = useMemo<CartContextValue>(() => ({
-    items,
-    itemCount: items.reduce((sum, item) => sum + Number(item.quantity), 0),
-    addItem: (item, quantity = '1.0000') => {
-      const existing = items.find((entry) => entry.variantId === item.variantId)
+  const items = state.key === key ? state.items : []
 
-      if (existing) {
-        const nextQty = (Number(existing.quantity) + Number(quantity)).toFixed(4)
-        persist(items.map((entry) => (entry.variantId === item.variantId ? { ...entry, quantity: nextQty } : entry)))
-        return
-      }
+  // The pre-account-scoped cart key would otherwise linger forever.
+  useEffect(() => {
+    try {
+      localStorage.removeItem(STORAGE_PREFIX)
+    } catch {
+      // ignore
+    }
+  }, [])
 
-      persist([...items, { ...item, quantity }])
+  const persist = useCallback(
+    (update: (current: CartItem[]) => CartItem[]) => {
+      setState((current) => {
+        const next = update(current.key === key ? current.items : readStorage(key))
+        writeStorage(key, next)
+        return { key, items: next }
+      })
     },
-    updateQuantity: (variantId, quantity) => {
-      if (Number(quantity) <= 0) {
-        persist(items.filter((entry) => entry.variantId !== variantId))
-        return
-      }
+    [key],
+  )
 
-      persist(items.map((entry) => (entry.variantId === variantId ? { ...entry, quantity } : entry)))
-    },
-    removeItem: (variantId) => persist(items.filter((entry) => entry.variantId !== variantId)),
-    clear: () => persist([]),
-  }), [items])
+  const value = useMemo<CartContextValue>(
+    () => ({
+      items,
+      itemCount: items.reduce((sum, item) => sum + Number(item.quantity), 0),
+      addItem: (item, quantity = '1.0000') =>
+        persist((current) => {
+          const existing = current.find((entry) => entry.variantId === item.variantId)
+          if (existing) {
+            const nextQty = (Number(existing.quantity) + Number(quantity)).toFixed(4)
+            return current.map((entry) =>
+              entry.variantId === item.variantId ? { ...entry, ...item, quantity: nextQty } : entry,
+            )
+          }
+          return [...current, { ...item, quantity }]
+        }),
+      updateQuantity: (variantId, quantity) =>
+        persist((current) =>
+          Number(quantity) <= 0
+            ? current.filter((entry) => entry.variantId !== variantId)
+            : current.map((entry) => (entry.variantId === variantId ? { ...entry, quantity } : entry)),
+        ),
+      removeItem: (variantId) => persist((current) => current.filter((entry) => entry.variantId !== variantId)),
+      clear: () => persist(() => []),
+    }),
+    [items, persist],
+  )
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>
 }

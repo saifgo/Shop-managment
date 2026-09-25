@@ -1,4 +1,4 @@
-import type { MoneyAmount, Paginated } from '@/lib/api/orders'
+import { errorMessage, type MoneyAmount, type Paginated } from '@/lib/api/orders'
 
 export interface DeliverySummary {
   id: string
@@ -9,6 +9,12 @@ export interface DeliverySummary {
   created_at: string
   dispatched_at?: string | null
   delivered_at?: string | null
+  is_replacement?: boolean
+  line_count?: number
+  /** The active (not cancelled/credited) invoice for this delivery, if any. */
+  invoice?: { id: string; document_number: string | null; status: string } | null
+  /** Present when listing deliveries for one order. */
+  lines?: DeliveryDetail['lines']
 }
 
 export interface DeliveryDetail extends DeliverySummary {
@@ -84,7 +90,7 @@ export const deliveriesApi = {
     return fetch(`${base}/api/deliveries${query}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load deliveries')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load deliveries'))
       return (await response.json()) as Paginated<DeliverySummary>
     })
   },
@@ -93,7 +99,7 @@ export const deliveriesApi = {
     return fetch(`${base}/api/deliveries/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load delivery')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load delivery'))
       return (await response.json()) as DeliveryDetail
     })
   },
@@ -104,7 +110,7 @@ export const deliveriesApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify({ lines, notes }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to create delivery')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to create delivery'))
       return (await response.json()) as DeliveryDetail
     })
   },
@@ -115,7 +121,7 @@ export const deliveriesApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ status }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to transition delivery')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to transition delivery'))
       return (await response.json()) as DeliveryDetail
     })
   },
@@ -126,7 +132,7 @@ export const invoicesApi = {
     return fetch(`${base}/api/invoices?page=${page}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load invoices')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load invoices'))
       return (await response.json()) as Paginated<InvoiceDocument>
     })
   },
@@ -135,7 +141,7 @@ export const invoicesApi = {
     return fetch(`${base}/api/invoices/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to load invoice')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load invoice'))
       return (await response.json()) as InvoiceDocument
     })
   },
@@ -146,7 +152,7 @@ export const invoicesApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify({ delivery_id: deliveryId }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to create invoice')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to create invoice'))
       return (await response.json()) as InvoiceDocument
     })
   },
@@ -157,7 +163,7 @@ export const invoicesApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ due_date: dueDate }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to issue invoice')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to issue invoice'))
       return (await response.json()) as InvoiceDocument
     })
   },
@@ -181,7 +187,7 @@ export const paymentsApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify(payload),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to record payment')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to record payment'))
       return (await response.json()) as PaymentRecord
     })
   },
@@ -192,7 +198,7 @@ export const paymentsApi = {
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ allocations }),
     }).then(async (response) => {
-      if (!response.ok) throw new Error('Failed to allocate payment')
+      if (!response.ok) throw new Error(await errorMessage(response, 'Failed to allocate payment'))
       return (await response.json()) as PaymentRecord
     })
   },

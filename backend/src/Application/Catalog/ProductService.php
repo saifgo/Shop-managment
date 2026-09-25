@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Catalog;
 
+use App\Application\Inventory\AvailabilityService;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Catalog\BackorderPolicy;
 use App\Domain\Catalog\Visibility;
@@ -14,18 +15,37 @@ use App\Infrastructure\Persistence\Entity\Catalog\Product;
 use App\Infrastructure\Persistence\Entity\Catalog\ProductMedia;
 use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Identity\User;
+use App\Infrastructure\Persistence\Entity\Inventory\StockBalance;
 use App\Infrastructure\Persistence\UnitOfWork;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Contracts\Service\ResetInterface;
 
-final class ProductService
+final class ProductService implements ResetInterface
 {
     public function __construct(
         private EntityManagerInterface $entityManager,
         private UnitOfWork $unitOfWork,
         private PricingService $pricingService,
+        private AvailabilityService $availabilityService,
     ) {
+    }
+
+    /** Available-to-sell below this is flagged as low stock (matches the dashboard and stock report). */
+    public const LOW_STOCK_THRESHOLD = '5.0000';
+
+    /**
+     * Stock per variant id at the default location, loaded in one query for the variants being serialized.
+     *
+     * @var array<string, array{on_hand: string, available: string}>
+     */
+    private array $stockCache = [];
+
+    public function reset(): void
+    {
+        $this->stockCache = [];
     }
 
     /**
@@ -39,6 +59,7 @@ final class ProductService
         ?string $visibility,
         ?string $search,
         bool $portalView,
+        ?string $status = null,
     ): PaginatedResult {
         $companyId = $user->companyId()->toString();
         $qb = $this->entityManager->createQueryBuilder()
@@ -57,14 +78,23 @@ final class ProductService
                 ->setParameter('visibility', $visibility);
         }
 
+        if (!$portalView && $status === 'active') {
+            $qb->andWhere('p.isActive = true');
+        } elseif (!$portalView && $status === 'inactive') {
+            $qb->andWhere('p.isActive = false');
+        }
+
         if ($categoryId !== null && $categoryId !== '') {
             $qb->andWhere('p.category = :categoryId')
                 ->setParameter('categoryId', $categoryId);
         }
 
         if ($search !== null && $search !== '') {
-            $qb->andWhere('LOWER(p.name) LIKE :search OR LOWER(p.slug) LIKE :search')
-                ->setParameter('search', '%'.strtolower($search).'%');
+            // Also match variant SKUs so staff can look a product up by the code printed on the piece.
+            $qb->andWhere('LOWER(p.name) LIKE :search OR LOWER(p.slug) LIKE :search OR EXISTS (
+                    SELECT sv.id FROM '.ProductVariant::class.' sv WHERE sv.product = p AND LOWER(sv.sku) LIKE :search
+                )')
+                ->setParameter('search', '%'.mb_strtolower(trim($search)).'%');
         }
 
         $qb->setFirstResult(max(0, ($page - 1) * $perPage))
@@ -73,12 +103,14 @@ final class ProductService
         $paginator = new Paginator($qb, fetchJoinCollection: false);
         $customerId = $this->resolveCustomerId($user);
 
+        /** @var list<Product> $products */
+        $products = array_values(array_filter(iterator_to_array($paginator), static fn ($p) => $p instanceof Product));
+        $this->preloadStock($user, $products);
+
         $items = [];
 
-        foreach ($paginator as $product) {
-            if ($product instanceof Product) {
-                $items[] = $this->serializeProductSummary($product, $user, $customerId);
-            }
+        foreach ($products as $product) {
+            $items[] = $this->serializeProductSummary($product, $user, $customerId);
         }
 
         return new PaginatedResult($items, $page, $perPage, count($paginator));
@@ -106,6 +138,7 @@ final class ProductService
     public function create(User $user, array $data): array
     {
         $category = $this->resolveCategory($user, $data['category_id'] ?? null);
+        $this->assertSlugAvailable($user, $data['slug']);
 
         $product = new Product(
             id: EntityId::generate(),
@@ -134,6 +167,7 @@ final class ProductService
     {
         $product = $this->findProductForUser($user, $productId);
         $category = $this->resolveCategory($user, $data['category_id'] ?? null);
+        $this->assertSlugAvailable($user, $data['slug'], $product->getId());
 
         $product->update(
             name: $data['name'],
@@ -158,6 +192,7 @@ final class ProductService
     public function createVariant(User $user, string $productId, array $data): array
     {
         $product = $this->findProductForUser($user, $productId);
+        $this->assertSkuAvailable($user, $data['sku']);
 
         $variant = new ProductVariant(
             id: EntityId::generate(),
@@ -170,6 +205,42 @@ final class ProductService
         );
 
         $this->entityManager->persist($variant);
+        $this->unitOfWork->flush();
+
+        return $this->serializeVariant($variant, $user, null);
+    }
+
+    /**
+     * @param array{sku: string, name: string, base_price: array{amount: string, currency: string}, attributes: array<string, string>, is_active: bool} $data
+     *
+     * @return array<string, mixed>
+     */
+    public function updateVariant(User $user, string $productId, string $variantId, array $data): array
+    {
+        $product = $this->findProductForUser($user, $productId);
+        $variant = null;
+
+        foreach ($product->getVariants() as $candidate) {
+            if ($candidate->getId() === $variantId) {
+                $variant = $candidate;
+                break;
+            }
+        }
+
+        if (!$variant instanceof ProductVariant) {
+            throw new NotFoundHttpException('Variant not found.');
+        }
+
+        $this->assertSkuAvailable($user, $data['sku'], $variant->getId());
+
+        $variant->update(
+            sku: $data['sku'],
+            name: $data['name'],
+            basePrice: Money::of($data['base_price']['amount'], $data['base_price']['currency']),
+            attributes: $data['attributes'],
+            isActive: $data['is_active'],
+        );
+
         $this->unitOfWork->flush();
 
         return $this->serializeVariant($variant, $user, null);
@@ -198,6 +269,97 @@ final class ProductService
         }
 
         return $variants;
+    }
+
+    private function assertSlugAvailable(User $user, string $slug, ?string $exceptProductId = null): void
+    {
+        /** @var Product|null $existing */
+        $existing = $this->entityManager->getRepository(Product::class)->findOneBy([
+            'companyId' => $user->companyId()->toString(),
+            'slug' => $slug,
+        ]);
+
+        if ($existing !== null && $existing->getId() !== $exceptProductId) {
+            throw new ConflictHttpException(sprintf('Another product already uses the slug "%s".', $slug));
+        }
+    }
+
+    private function assertSkuAvailable(User $user, string $sku, ?string $exceptVariantId = null): void
+    {
+        /** @var ProductVariant|null $existing */
+        $existing = $this->entityManager->getRepository(ProductVariant::class)->findOneBy([
+            'companyId' => $user->companyId()->toString(),
+            'sku' => $sku,
+        ]);
+
+        if ($existing !== null && $existing->getId() !== $exceptVariantId) {
+            throw new ConflictHttpException(sprintf('The SKU "%s" is already used by %s.', $sku, $existing->getProduct()->getName()));
+        }
+    }
+
+    /**
+     * @param list<Product> $products
+     */
+    private function preloadStock(User $user, array $products): void
+    {
+        $variantIds = [];
+
+        foreach ($products as $product) {
+            foreach ($product->getVariants() as $variant) {
+                $variantIds[] = $variant->getId();
+            }
+        }
+
+        $location = $this->availabilityService->resolveDefaultLocation($user->companyId());
+
+        if ($variantIds === [] || $location === null) {
+            return;
+        }
+
+        /** @var list<StockBalance> $balances */
+        $balances = $this->entityManager->createQueryBuilder()
+            ->select('b')
+            ->from(StockBalance::class, 'b')
+            ->where('b.companyId = :companyId')
+            ->andWhere('b.location = :location')
+            ->andWhere('b.variant IN (:variants)')
+            ->setParameter('companyId', $user->companyId()->toString())
+            ->setParameter('location', $location)
+            ->setParameter('variants', $variantIds)
+            ->getQuery()
+            ->getResult();
+
+        foreach ($variantIds as $variantId) {
+            $this->stockCache[$variantId] = ['on_hand' => '0.0000', 'available' => '0.0000'];
+        }
+
+        foreach ($balances as $balance) {
+            $this->stockCache[$balance->getVariant()->getId()] = [
+                'on_hand' => $balance->getPhysicalOnHand()->amount(),
+                'available' => $balance->getAvailableToSell()->amount(),
+            ];
+        }
+    }
+
+    /**
+     * @return array{on_hand: string, available: string}
+     */
+    private function stockFor(User $user, ProductVariant $variant): array
+    {
+        if (!isset($this->stockCache[$variant->getId()])) {
+            $this->preloadStock($user, [$variant->getProduct()]);
+        }
+
+        return $this->stockCache[$variant->getId()] ?? ['on_hand' => '0.0000', 'available' => '0.0000'];
+    }
+
+    private static function stockStatus(string $available): string
+    {
+        if (bccomp($available, '0', 4) <= 0) {
+            return 'out_of_stock';
+        }
+
+        return bccomp($available, self::LOW_STOCK_THRESHOLD, 4) < 0 ? 'low_stock' : 'in_stock';
     }
 
     private function findProductForUser(User $user, string $productId): Product
@@ -297,6 +459,12 @@ final class ProductService
         $primaryMedia = $product->getMedia()->filter(static fn (ProductMedia $m) => $m->isPrimary())->first()
             ?: $product->getMedia()->first();
 
+        $available = '0.0000';
+
+        foreach ($variants as $variant) {
+            $available = bcadd($available, $this->positive($this->stockFor($user, $variant)['available']), 4);
+        }
+
         return [
             'id' => $product->getId(),
             'name' => $product->getName(),
@@ -310,6 +478,8 @@ final class ProductService
             'from_price' => $fromPrice,
             'primary_image_url' => $primaryMedia instanceof ProductMedia ? $primaryMedia->getUrl() : null,
             'variant_count' => $variants->count(),
+            'available_quantity' => $available,
+            'stock_status' => self::stockStatus($available),
         ];
     }
 
@@ -349,8 +519,9 @@ final class ProductService
     private function serializeVariant(ProductVariant $variant, User $user, ?EntityId $customerId): array
     {
         $price = $this->pricingService->resolveForVariant($variant, $user->companyId(), $customerId);
+        $stock = $this->stockFor($user, $variant);
 
-        return [
+        $serialized = [
             'id' => $variant->getId(),
             'sku' => $variant->getSku(),
             'name' => $variant->getName(),
@@ -361,6 +532,20 @@ final class ProductService
                 'amount' => $variant->getBasePrice()->amount(),
                 'currency' => $variant->getBasePrice()->currency(),
             ],
+            'available_quantity' => $this->positive($stock['available']),
+            'stock_status' => self::stockStatus($stock['available']),
         ];
+
+        // Physical stock (including reserved units) is an internal figure.
+        if (!$user->isPortalUser()) {
+            $serialized['on_hand'] = $stock['on_hand'];
+        }
+
+        return $serialized;
+    }
+
+    private function positive(string $quantity): string
+    {
+        return bccomp($quantity, '0', 4) > 0 ? $quantity : '0.0000';
     }
 }

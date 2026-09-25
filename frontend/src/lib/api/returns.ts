@@ -1,3 +1,5 @@
+import { errorMessage } from '@/lib/api/orders'
+
 function authHeaders(idempotencyKey?: string): Record<string, string> {
   const token = localStorage.getItem('tittawin.access_token') ?? undefined
   const headers: Record<string, string> = {}
@@ -48,7 +50,7 @@ export interface ReturnSummary {
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
-  if (!response.ok) throw new Error('Request failed')
+  if (!response.ok) throw new Error(await errorMessage(response, 'Request failed'))
   return (await response.json()) as T
 }
 

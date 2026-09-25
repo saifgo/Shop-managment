@@ -16,7 +16,7 @@ export function PortalReturnsPage() {
     <section className="flex flex-col gap-6">
       <PageHeader
         title="Returns & Exchanges"
-        description="Request a return from an order detail page, then track status here."
+        description="To return something, open the order and choose “Return items”. Track progress here."
       />
       <QueryState
         isLoading={isLoading}
@@ -33,7 +33,7 @@ export function PortalReturnsPage() {
             {
               key: 'order',
               header: 'Order',
-              cell: (item) => <Link to={`/portal/orders/${item.order_id}`}>{item.order_id.slice(-8)}</Link>,
+              cell: (item) => <Link to={`/portal/orders/${item.order_id}`} className="underline-offset-4 hover:underline">View order</Link>,
             },
             {
               key: 'status',

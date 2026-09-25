@@ -43,6 +43,7 @@ final class OrderController extends AbstractController
             perPage: min(100, max(1, (int) $request->query->get('per_page', 20))),
             status: $request->query->get('status'),
             customerId: $request->query->get('customer_id'),
+            search: $request->query->get('search'),
         );
 
         return $this->json($result->toArray());

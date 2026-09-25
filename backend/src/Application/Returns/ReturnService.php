@@ -42,6 +42,7 @@ final class ReturnService
         private AvailabilityService $availabilityService,
         private DocumentService $documentService,
         private DeliveryService $deliveryService,
+        private ReturnedQuantities $returnedQuantities,
     ) {
     }
 
@@ -89,12 +90,32 @@ final class ReturnService
                 $itemsById[$item->getId()] = $item;
             }
 
+            $claimed = $this->returnedQuantities->forOrder($order);
+
             foreach ($payload['items'] as $itemPayload) {
                 $orderItem = $itemsById[$itemPayload['order_item_id']] ?? null;
 
                 if (!$orderItem instanceof OrderItem) {
                     throw new BadRequestHttpException('Invalid order item.');
                 }
+
+                $quantity = Quantity::of($itemPayload['quantity']);
+
+                if ($quantity->isZero()) {
+                    throw new BadRequestHttpException(sprintf('Enter how many %s you are returning.', $orderItem->getSku()));
+                }
+
+                $returnable = ReturnedQuantities::returnable($orderItem, $claimed);
+
+                if ($quantity->compare($returnable) > 0) {
+                    throw new BadRequestHttpException(sprintf(
+                        'Only %s of %s can be returned (delivered and not already in a return).',
+                        $returnable->amount(),
+                        $orderItem->getSku(),
+                    ));
+                }
+
+                $claimed[$orderItem->getId()] = ($claimed[$orderItem->getId()] ?? Quantity::zero())->add($quantity);
 
                 $deliveryLine = null;
 
@@ -106,7 +127,7 @@ final class ReturnService
                     EntityId::generate(),
                     $returnRequest,
                     $orderItem,
-                    Quantity::of($itemPayload['quantity']),
+                    $quantity,
                     $deliveryLine,
                     $itemPayload['reason'] ?? null,
                 );

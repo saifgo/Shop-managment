@@ -76,14 +76,3 @@ final readonly class TransitionDeliveryRequest
     ) {
     }
 }
-
-final readonly class CreateDeliveryRequest
-{
-    /** @param list<array{order_item_id: string, quantity: string}> $lines */
-    public function __construct(
-        #[Assert\Count(min: 1)]
-        public array $lines,
-        public ?string $notes = null,
-    ) {
-    }
-}

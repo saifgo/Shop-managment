@@ -9,7 +9,11 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
-import { catalogApi } from '@/lib/api/catalog'
+import { AlertCircleIcon } from 'lucide-react'
+import { toast } from 'sonner'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { catalogApi, flattenCategories } from '@/lib/api/catalog'
+import { slugify } from '@/lib/format'
 
 export function AdminCategoriesPage() {
   const queryClient = useQueryClient()
@@ -23,12 +27,13 @@ export function AdminCategoriesPage() {
   const createCategory = useMutation({
     mutationFn: () =>
       catalogApi.createCategory({
-        name: form.name,
-        slug: form.slug,
+        name: form.name.trim(),
+        slug: form.slug || slugify(form.name),
         parent_id: form.parent_id || null,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'categories'] })
+      toast.success(`Category ${form.name.trim()} created.`)
       setForm({ name: '', slug: '', parent_id: '' })
     },
   })
@@ -37,8 +42,8 @@ export function AdminCategoriesPage() {
 
   return (
     <section className="flex flex-col gap-6">
-      <Link to="/admin/catalog" className="text-sm text-muted-foreground">
-        Catalog
+      <Link to="/admin/catalog" className="w-fit text-sm text-muted-foreground hover:text-foreground">
+        ← Products
       </Link>
       <PageHeader title="Categories" />
 
@@ -64,22 +69,29 @@ export function AdminCategoriesPage() {
           <CardHeader>
             <CardTitle>New category</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="flex flex-col gap-4">
+            {createCategory.isError ? (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertDescription>{createCategory.error.message}</AlertDescription>
+              </Alert>
+            ) : null}
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="category-name">Name</FieldLabel>
                 <Input
                   id="category-name"
+                  placeholder="Tagines"
                   value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  onChange={(e) => setForm({ ...form, name: e.target.value, slug: slugify(e.target.value) })}
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="category-slug">Slug</FieldLabel>
+                <FieldLabel htmlFor="category-slug">URL name</FieldLabel>
                 <Input
                   id="category-slug"
                   value={form.slug}
-                  onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                  onChange={(e) => setForm({ ...form, slug: slugify(e.target.value) })}
                 />
               </Field>
               <Field>
@@ -90,7 +102,7 @@ export function AdminCategoriesPage() {
                   value={form.parent_id}
                   onChange={(e) => setForm({ ...form, parent_id: e.target.value })}
                 >
-                  <NativeSelectOption value="">Root</NativeSelectOption>
+                  <NativeSelectOption value="">None (top level)</NativeSelectOption>
                   {flat.map((category) => (
                     <NativeSelectOption key={category.id} value={category.id}>
                       {category.label}
@@ -101,7 +113,7 @@ export function AdminCategoriesPage() {
             </FieldGroup>
           </CardContent>
           <CardFooter>
-            <Button onClick={() => createCategory.mutate()} disabled={createCategory.isPending}>
+            <Button onClick={() => createCategory.mutate()} disabled={createCategory.isPending || !form.name.trim()}>
               {createCategory.isPending ? <Spinner data-icon="inline-start" /> : null}
               Create category
             </Button>
@@ -134,14 +146,4 @@ function CategoryTree({
       ))}
     </ul>
   )
-}
-
-function flattenCategories(
-  nodes: Array<{ id: string; name: string; children: typeof nodes }>,
-  prefix = '',
-): Array<{ id: string; label: string }> {
-  return nodes.flatMap((node) => [
-    { id: node.id, label: `${prefix}${node.name}` },
-    ...flattenCategories(node.children, `${prefix}${node.name} / `),
-  ])
 }

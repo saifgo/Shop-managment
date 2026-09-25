@@ -1,4 +1,5 @@
 import { Fragment, type ComponentType } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   ChartColumnIcon,
@@ -23,6 +24,7 @@ import {
 import { PermissionGate } from '@/features/auth/components/PermissionGate'
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { AdminBreadcrumb } from '@/features/admin/layouts/AdminBreadcrumb'
+import { dashboardApi, type AdminDashboardSummary } from '@/lib/api/dashboard'
 import { PERMISSIONS, type PermissionCode } from '@/lib/auth/permissions'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -45,6 +47,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -59,6 +62,8 @@ interface AdminNavItem {
   icon: ComponentType
   permission?: PermissionCode
   end?: boolean
+  /** Dashboard counter shown as a badge when non-zero. */
+  badge?: keyof Pick<AdminDashboardSummary, 'orders_to_confirm' | 'open_returns'>
 }
 
 interface AdminNavGroup {
@@ -92,6 +97,7 @@ const NAV_GROUPS: AdminNavGroup[] = [
         to: '/admin/orders',
         icon: ShoppingCartIcon,
         permission: PERMISSIONS.salesOrdersView,
+        badge: 'orders_to_confirm',
       },
       {
         title: 'Demand',
@@ -104,6 +110,7 @@ const NAV_GROUPS: AdminNavGroup[] = [
         to: '/admin/returns',
         icon: Undo2Icon,
         permission: PERMISSIONS.returnsView,
+        badge: 'open_returns',
       },
     ],
   },
@@ -111,7 +118,7 @@ const NAV_GROUPS: AdminNavGroup[] = [
     title: 'Catalog',
     items: [
       {
-        title: 'Catalog',
+        title: 'Products',
         to: '/admin/catalog',
         icon: PackageIcon,
         permission: PERMISSIONS.catalogView,
@@ -227,11 +234,12 @@ function isNavItemActive(pathname: string, item: AdminNavItem): boolean {
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
-function AdminNavLink({ item }: { item: AdminNavItem }) {
+function AdminNavLink({ item, counts }: { item: AdminNavItem; counts?: AdminDashboardSummary }) {
   const { pathname } = useLocation()
   const { isMobile, setOpenMobile } = useSidebar()
   const Icon = item.icon
   const active = isNavItemActive(pathname, item)
+  const badge = item.badge && counts ? counts[item.badge] : 0
 
   return (
     <SidebarMenuItem>
@@ -253,12 +261,20 @@ function AdminNavLink({ item }: { item: AdminNavItem }) {
         <Icon />
         <span>{item.title}</span>
       </SidebarMenuButton>
+      {badge > 0 ? <SidebarMenuBadge aria-label={`${badge} waiting`}>{badge}</SidebarMenuBadge> : null}
     </SidebarMenuItem>
   )
 }
 
 function AdminSidebarNav() {
   const { can } = useAuth()
+  // Shares the dashboard's cache entry, so the badges cost no extra request on the home page.
+  const { data: counts } = useQuery({
+    queryKey: ['admin', 'dashboard'],
+    queryFn: dashboardApi.admin,
+    enabled: can(PERMISSIONS.salesOrdersView),
+    refetchInterval: 60_000,
+  })
 
   return (
     <>
@@ -277,7 +293,7 @@ function AdminSidebarNav() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {group.items.map((item) => {
-                  const link = <AdminNavLink item={item} />
+                  const link = <AdminNavLink item={item} counts={counts} />
 
                   if (!item.permission) {
                     return <Fragment key={item.to}>{link}</Fragment>
