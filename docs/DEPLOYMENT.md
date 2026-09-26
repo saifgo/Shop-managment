@@ -132,7 +132,12 @@ php bin/console messenger:failed:retry
 **Worker notes:**
 
 - Run at least one worker process per environment
-- Use `--time-limit=3600` to recycle workers and prevent memory leaks
+- Use `--time-limit=3600` to recycle workers and prevent memory leaks. The hourly
+  `Worker stopped due to time limit of 3600s exceeded` log line is expected; the
+  container restart policy starts a fresh worker.
+- Do not reuse the API healthcheck (it probes php-fpm on :9000). The worker writes
+  `/tmp/messenger-worker.heartbeat` every ~10s; check that it is under 120s old:
+  `php -r "exit(@filemtime('/tmp/messenger-worker.heartbeat') > time() - 120 ? 0 : 1);"`
 - Monitor worker logs for `GenerateDocumentPdf` failures (PDF generation)
 
 ## Observability

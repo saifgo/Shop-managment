@@ -155,6 +155,13 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    # See docker-compose.yml: the image healthcheck targets php-fpm, not the worker.
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@filemtime('/tmp/messenger-worker.heartbeat') > time() - 120 ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     restart: unless-stopped
 
   frontend:

@@ -130,6 +130,14 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    # The image's default healthcheck probes php-fpm on :9000, which the worker never runs.
+    # WorkerHeartbeatListener touches this file every ~10s while the consume loop is alive.
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@filemtime('/tmp/messenger-worker.heartbeat') > time() - 120 ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   frontend:
     build:
