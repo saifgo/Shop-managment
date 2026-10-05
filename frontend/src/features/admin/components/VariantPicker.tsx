@@ -13,7 +13,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
-import { catalogApi } from '@/lib/api/catalog'
+import { catalogApi, type ProductKind } from '@/lib/api/catalog'
 
 export interface PickedVariant {
   variant_id: string
@@ -22,11 +22,15 @@ export interface PickedVariant {
   label: string
   /** Catalog price as seen by the admin; customer-specific pricing is applied server-side. */
   price: { amount: string; currency: string }
+  /** Unit the item is counted in: pc, kg... */
+  unit: string
 }
 
 interface VariantPickerProps {
   onSelect: (variant: PickedVariant) => void
   triggerLabel?: string
+  /** Restrict the search to finished goods or raw materials. */
+  kind?: ProductKind
 }
 
 function useDebouncedValue(value: string, delayMs: number) {
@@ -40,15 +44,15 @@ function useDebouncedValue(value: string, delayMs: number) {
   return debounced
 }
 
-export function VariantPicker({ onSelect, triggerLabel = 'Add product' }: VariantPickerProps) {
+export function VariantPicker({ onSelect, triggerLabel = 'Add product', kind }: VariantPickerProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [productId, setProductId] = useState<string | null>(null)
   const debouncedSearch = useDebouncedValue(search.trim(), 250)
 
   const products = useQuery({
-    queryKey: ['admin', 'variant-picker', 'products', debouncedSearch],
-    queryFn: () => catalogApi.listProducts({ search: debouncedSearch || undefined, per_page: 20 }),
+    queryKey: ['admin', 'variant-picker', 'products', debouncedSearch, kind],
+    queryFn: () => catalogApi.listProducts({ search: debouncedSearch || undefined, per_page: 20, kind }),
     enabled: open && productId === null,
   })
 
@@ -108,6 +112,7 @@ export function VariantPicker({ onSelect, triggerLabel = 'Add product' }: Varian
                     >
                       <span className="min-w-0 truncate">{item.name}</span>
                       <span className="shrink-0 text-xs text-muted-foreground">
+                        {item.kind === 'raw_material' ? 'Raw material · ' : ''}
                         {item.variant_count} variant{item.variant_count === 1 ? '' : 's'}
                       </span>
                     </button>
@@ -142,6 +147,7 @@ export function VariantPicker({ onSelect, triggerLabel = 'Add product' }: Varian
                           sku: variant.sku,
                           label: `${product.data!.name} — ${variant.name}`,
                           price: { amount: variant.price.amount, currency: variant.price.currency },
+                          unit: product.data!.unit,
                         })
                         close()
                       }}

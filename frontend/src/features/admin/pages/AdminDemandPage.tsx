@@ -23,7 +23,6 @@ export function AdminDemandPage() {
         action={
           <ToggleGroup
             variant="outline"
-            spacing={0}
             value={[view]}
             onValueChange={(next) => {
               if (next[0]) setView(next[0] as DemandView)

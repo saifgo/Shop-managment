@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider } from '@/features/auth/context/AuthContext'
 import { CartProvider } from '@/features/portal/context/CartContext'
-import { Toaster } from '@/components/ui/sonner'
+import { AnchoredToastProvider, ToastProvider } from '@/components/ui/toast'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 const queryClient = new QueryClient({
@@ -24,12 +24,13 @@ export function AppProviders({ children }: AppProvidersProps) {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <TooltipProvider>
-          <AuthProvider>
-            <CartProvider>
-              {children}
-              <Toaster />
-            </CartProvider>
-          </AuthProvider>
+          <ToastProvider>
+            <AnchoredToastProvider>
+              <AuthProvider>
+                <CartProvider>{children}</CartProvider>
+              </AuthProvider>
+            </AnchoredToastProvider>
+          </ToastProvider>
         </TooltipProvider>
       </BrowserRouter>
     </QueryClientProvider>

@@ -325,7 +325,7 @@ function AdminUserMenu() {
       <DropdownMenuTrigger
         render={<Button variant="ghost" className="gap-2 px-2" />}
       >
-        <Avatar size="sm">
+        <Avatar className="size-6">
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
         <span className="hidden max-w-48 truncate text-sm md:inline">

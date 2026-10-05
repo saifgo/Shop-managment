@@ -54,7 +54,7 @@ export function AdminHomePage() {
               </Link>
             </PermissionGate>
             <PermissionGate permission={PERMISSIONS.salesOrdersManage}>
-              <Button nativeButton={false} render={<Link to="/admin/orders/new" />}>
+              <Button render={<Link to="/admin/orders/new" />}>
                 <PlusIcon data-icon="inline-start" />
                 New order
               </Button>

@@ -48,7 +48,7 @@ export function AdminDocumentsPage() {
         description="Invoices, quotes, proformas, order forms, delivery notes and goods issue notes."
         action={
           <PermissionGate permission={PERMISSIONS.documentsManage}>
-            <Button nativeButton={false} render={<Link to={newHref} />}>
+            <Button render={<Link to={newHref} />}>
               <PlusIcon data-icon="inline-start" />
               New document
             </Button>

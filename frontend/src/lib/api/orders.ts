@@ -1,3 +1,5 @@
+import { authFetch } from '@/lib/api/client'
+
 export interface MoneyAmount {
   amount: string
   currency: string
@@ -135,7 +137,7 @@ export async function errorMessage(response: Response, fallback: string): Promis
 
 export const ordersApi = {
   validateCart(items: Array<{ variant_id: string; quantity: string }>, customerId?: string) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/cart/validate`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/cart/validate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ items, customer_id: customerId }),
@@ -152,7 +154,7 @@ export const ordersApi = {
     customerId?: string,
     idempotencyKey: string = crypto.randomUUID(),
   ) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -172,7 +174,7 @@ export const ordersApi = {
     if (filters.search) query.set('search', filters.search)
     if (filters.customerId) query.set('customer_id', filters.customerId)
     if (filters.perPage) query.set('per_page', String(filters.perPage))
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders?${query.toString()}`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders?${query.toString()}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load orders'))
@@ -181,7 +183,7 @@ export const ordersApi = {
   },
 
   getOrder(id: string) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load order'))
@@ -190,7 +192,7 @@ export const ordersApi = {
   },
 
   confirmOrder(id: string) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/confirm`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/confirm`, {
       method: 'POST',
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
@@ -200,7 +202,7 @@ export const ordersApi = {
   },
 
   cancelOrder(id: string, reason?: string) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/cancel`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ reason }),
@@ -211,7 +213,7 @@ export const ordersApi = {
   },
 
   reserveOrder(id: string) {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/reserve`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/orders/${id}/reserve`, {
       method: 'POST',
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
@@ -223,7 +225,7 @@ export const ordersApi = {
 
 export const demandApi = {
   byCustomer() {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-customer`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-customer`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load demand'))
@@ -232,7 +234,7 @@ export const demandApi = {
   },
 
   byProduct() {
-    return fetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-product`, {
+    return authFetch(`${import.meta.env.VITE_API_BASE_URL ?? ''}/api/demand/by-product`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load demand'))

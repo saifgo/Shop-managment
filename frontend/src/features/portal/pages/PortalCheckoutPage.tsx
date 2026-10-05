@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircleIcon, ArrowLeftIcon, ShoppingBagIcon, Trash2Icon, TruckIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { ProductImage } from '@/components/ProductImage'
@@ -68,7 +68,7 @@ export function PortalCheckoutPage() {
             <EmptyDescription>Browse the shop and add the pieces you need.</EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
-            <Button nativeButton={false} render={<Link to="/portal/catalog" />}>
+            <Button render={<Link to="/portal/catalog" />}>
               Browse the shop
             </Button>
           </EmptyContent>
@@ -118,7 +118,7 @@ export function PortalCheckoutPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm">
             {error ? (
-              <Alert variant="destructive">
+              <Alert variant="error">
                 <AlertCircleIcon />
                 <AlertTitle>Unable to check your cart</AlertTitle>
                 <AlertDescription>{error.message}</AlertDescription>
@@ -150,7 +150,7 @@ export function PortalCheckoutPage() {
             ) : null}
 
             {validation && !validation.valid ? (
-              <Alert variant="destructive">
+              <Alert variant="error">
                 <AlertCircleIcon />
                 <AlertTitle>Some items are not available</AlertTitle>
                 <AlertDescription>Lower the quantity or remove the items marked below.</AlertDescription>
@@ -179,7 +179,7 @@ export function PortalCheckoutPage() {
             </Field>
 
             {submitOrder.isError ? (
-              <Alert variant="destructive">
+              <Alert variant="error">
                 <AlertCircleIcon />
                 <AlertTitle>Order not placed</AlertTitle>
                 <AlertDescription>{submitOrder.error.message}</AlertDescription>

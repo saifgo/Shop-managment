@@ -72,7 +72,7 @@ export function ProductPicturesCard({ product }: { product: ProductDetail }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {errorMessage ? (
-          <Alert variant="destructive">
+          <Alert variant="error">
             <AlertCircleIcon />
             <AlertTitle>Picture not saved</AlertTitle>
             <AlertDescription>{errorMessage}</AlertDescription>

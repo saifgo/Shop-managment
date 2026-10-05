@@ -21,9 +21,6 @@ final class DocumentRenderer
     /** Calibri-compatible font installed in the API image (Debian fonts-crosextra-carlito). */
     private const CARLITO_DIR = '/usr/share/fonts/truetype/crosextra';
 
-    /** The paper template always shows at least this many table rows, blank ones included. */
-    private const MIN_TABLE_ROWS = 7;
-
     /** Box the stamp/signature image is fitted into, in points. */
     private const STAMP_MAX_WIDTH = 160.0;
     private const STAMP_MAX_HEIGHT = 105.0;
@@ -140,6 +137,8 @@ final class DocumentRenderer
             'title' => $document->getDocumentType()->printedTitle(),
             'number' => $document->getDocumentNumber() ?? 'Brouillon',
             'date' => $date->format('d/m/Y'),
+            'due_date' => $document->getDueDate()?->format('d/m/Y'),
+            'currency' => $currency,
             'company' => $company,
             'customer' => [
                 'name' => $document->getCustomerLegalName() ?: $document->getCustomerDisplayName(),
@@ -147,7 +146,7 @@ final class DocumentRenderer
                 'tax_id' => $document->getCustomerTaxId() ?: $document->getCustomerVatNumber(),
             ],
             'lines' => $lines,
-            'blank_rows' => max(0, self::MIN_TABLE_ROWS - count($lines)),
+            'blank_rows' => 0,
             'totals' => $totals,
             'notes' => $document->getNotes(),
             'stamp' => self::stamp($company->stampImage),

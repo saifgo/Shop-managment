@@ -31,6 +31,10 @@ class ProductionItem
     #[ORM\Column(name: 'accepted_output_quantity', type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
     private string $acceptedOutputQuantity = '0.0000';
 
+    /** Cost of the raw materials drawn for this product. */
+    #[ORM\Column(name: 'material_cost', type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
+    private string $materialCost = '0.0000';
+
     public function __construct(
         EntityId $id,
         ProductionOrder $productionOrder,
@@ -67,6 +71,16 @@ class ProductionItem
     public function getAcceptedOutputQuantity(): Quantity
     {
         return Quantity::of($this->acceptedOutputQuantity);
+    }
+
+    public function getMaterialCost(): string
+    {
+        return bcadd($this->materialCost, '0', 4);
+    }
+
+    public function setMaterialCost(string $cost): void
+    {
+        $this->materialCost = $cost;
     }
 
     public function setAcceptedOutputQuantity(Quantity $quantity): void

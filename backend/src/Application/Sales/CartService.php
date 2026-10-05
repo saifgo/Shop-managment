@@ -169,6 +169,10 @@ final class CartService
             throw new BadRequestHttpException(sprintf('Variant %s not found.', $variantId));
         }
 
+        if (!$variant->getProduct()->getKind()->isSellable()) {
+            throw new BadRequestHttpException(sprintf('%s is a raw material and cannot be ordered.', $variant->getSku()));
+        }
+
         return $variant;
     }
 }

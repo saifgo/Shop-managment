@@ -72,6 +72,14 @@ class ProductionOrder implements CompanyScoped
     #[ORM\Column(name: 'cancelled_at', nullable: true)]
     private ?\DateTimeImmutable $cancelledAt = null;
 
+    /** Labour, kiln gas/electricity and other costs not drawn from stock, shared across the products. */
+    #[ORM\Column(name: 'additional_cost', type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
+    private string $additionalCost = '0.0000';
+
+    /** Set once the recipe materials have been drawn from stock; cleared if they are given back. */
+    #[ORM\Column(name: 'materials_consumed_at', nullable: true)]
+    private ?\DateTimeImmutable $materialsConsumedAt = null;
+
     /** @var Collection<int, ProductionItem> */
     #[ORM\OneToMany(mappedBy: 'productionOrder', targetEntity: ProductionItem::class, cascade: ['persist'], orphanRemoval: true)]
     #[ORM\OrderBy(['id' => 'ASC'])]
@@ -199,6 +207,32 @@ class ProductionOrder implements CompanyScoped
     public function getCancelledAt(): ?\DateTimeImmutable
     {
         return $this->cancelledAt;
+    }
+
+    public function getAdditionalCost(): string
+    {
+        return bcadd($this->additionalCost, '0', 4);
+    }
+
+    public function setAdditionalCost(string $cost): void
+    {
+        $this->additionalCost = $cost;
+        $this->updatedAt = new \DateTimeImmutable();
+    }
+
+    public function getMaterialsConsumedAt(): ?\DateTimeImmutable
+    {
+        return $this->materialsConsumedAt;
+    }
+
+    public function markMaterialsConsumed(): void
+    {
+        $this->materialsConsumedAt = new \DateTimeImmutable();
+    }
+
+    public function markMaterialsReturned(): void
+    {
+        $this->materialsConsumedAt = null;
     }
 
     /** @return Collection<int, ProductionItem> */

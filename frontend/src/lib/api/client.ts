@@ -1,3 +1,5 @@
+import { getAccessToken } from '@/lib/auth/storage';
+
 export interface ApiErrorBody {
   error?: {
     code: string;
@@ -87,6 +89,38 @@ async function request<T>(path: string, init?: RequestInit, retry = true): Promi
   }
 
   return (await response.json()) as T;
+}
+
+/**
+ * `fetch` for API modules that build their own requests: sends the current access token and, when
+ * it has expired (401), refreshes the session once and retries. Without this, a screen left open
+ * for longer than the 15 minute token lifetime starts failing until the page is reloaded.
+ */
+export async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const send = (token: string | null): Promise<Response> => {
+    const headers = new Headers(init.headers);
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    return fetch(input, { ...init, headers });
+  };
+
+  const response = await send(getAccessToken());
+
+  if (response.status !== 401 || !refreshHandler || input.includes('/api/auth/login')) {
+    return response;
+  }
+
+  const newAccessToken = await refreshHandler();
+
+  if (!newAccessToken) {
+    authFailureHandler?.();
+
+    return response;
+  }
+
+  return send(newAccessToken);
 }
 
 export const apiClient = {

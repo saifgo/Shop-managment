@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertCircleIcon, ArrowLeftIcon, PencilIcon, PlusIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
@@ -12,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -22,11 +22,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { CustomerSelect } from '@/features/admin/components/CustomerSelect'
 import { useAuth } from '@/features/auth/hooks/useAuth'
-import { catalogApi, flattenCategories, type CategoryNode, type ProductDetail } from '@/lib/api/catalog'
+import { catalogApi, flattenCategories, type CategoryNode, type ProductDetail, type ProductKind } from '@/lib/api/catalog'
 import { customersApi } from '@/lib/api/customers'
 import { PERMISSIONS } from '@/lib/auth/permissions'
-import { formatQuantity, slugify } from '@/lib/format'
+import { formatQuantity, formatWithUnit, slugify } from '@/lib/format'
 import { ProductPicturesCard } from './ProductPicturesCard'
+import { RecipeCard } from './RecipeCard'
 import { VariantDialog } from './VariantDialog'
 
 const VISIBILITY_HELP: Record<string, string> = {
@@ -35,8 +36,17 @@ const VISIBILITY_HELP: Record<string, string> = {
   internal: 'Staff only — e.g. samples or production parts.',
 }
 
+const UNITS = ['pc', 'set', 'kg', 'g', 'l', 'ml', 'm']
+
+const KIND_HELP: Record<ProductKind, string> = {
+  finished_good: 'Made in the workshop and sold to customers.',
+  raw_material: 'Clay, glazes, pigments, packaging: bought, kept in stock and consumed by production. Never shown or sold to customers.',
+}
+
 export function AdminProductEditPage() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  const initialKind: ProductKind = searchParams.get('kind') === 'raw_material' ? 'raw_material' : 'finished_good'
   // Route `catalog/new` has no `:id` param, so `id` is undefined there.
   const isNew = !id || id === 'new'
 
@@ -52,7 +62,7 @@ export function AdminProductEditPage() {
   })
 
   if (isNew) {
-    return <ProductEditor categories={categories?.items ?? []} />
+    return <ProductEditor categories={categories?.items ?? []} initialKind={initialKind} />
   }
 
   return (
@@ -62,8 +72,10 @@ export function AdminProductEditPage() {
   )
 }
 
-function formFromProduct(product?: ProductDetail) {
+function formFromProduct(product?: ProductDetail, initialKind: ProductKind = 'finished_good') {
   return {
+    kind: product?.kind ?? initialKind,
+    unit: product?.unit ?? (initialKind === 'raw_material' ? 'kg' : 'pc'),
     name: product?.name ?? '',
     slug: product?.slug ?? '',
     description: product?.description ?? '',
@@ -74,17 +86,26 @@ function formFromProduct(product?: ProductDetail) {
   }
 }
 
-function ProductEditor({ product, categories }: { product?: ProductDetail; categories: CategoryNode[] }) {
+function ProductEditor({
+  product,
+  categories,
+  initialKind = 'finished_good',
+}: {
+  product?: ProductDetail
+  categories: CategoryNode[]
+  initialKind?: ProductKind
+}) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { can } = useAuth()
   const canManage = can(PERMISSIONS.catalogManage)
   const isNew = !product
 
-  const [form, setForm] = useState(() => formFromProduct(product))
+  const [form, setForm] = useState(() => formFromProduct(product, initialKind))
   // Keep the slug following the name until someone edits the slug by hand.
   const [slugTouched, setSlugTouched] = useState(() => Boolean(product))
-  const saved = formFromProduct(product)
+  const saved = formFromProduct(product, initialKind)
+  const isRawMaterial = form.kind === 'raw_material'
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved)
 
   const saveProduct = useMutation({
@@ -97,13 +118,15 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
         backorder_policy: form.backorder_policy,
         category_id: form.category_id || null,
         is_active: form.is_active,
+        kind: form.kind,
+        unit: form.unit,
       }
       return product ? catalogApi.updateProduct(product.id, payload) : catalogApi.createProduct(payload)
     },
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'products'] })
       if (isNew) {
-        toast.success('Product created. Add variants and pictures next.')
+        toast.success(isRawMaterial ? 'Raw material created. Add a variant for each grade or pack size.' : 'Product created. Add variants and pictures next.')
         navigate(`/admin/catalog/${result.id}`)
       } else {
         queryClient.setQueryData(['admin', 'product', result.id], result)
@@ -126,11 +149,13 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
       </Link>
 
       <PageHeader
-        title={isNew ? 'New product' : product.name}
+        title={isNew ? (isRawMaterial ? 'New raw material' : 'New product') : product.name}
         description={
           isNew
-            ? 'Start with the basics. Variants, prices and pictures come right after saving.'
-            : `${activeVariants} active ${activeVariants === 1 ? 'variant' : 'variants'} · ${formatQuantity(product.available_quantity)} available to sell`
+            ? isRawMaterial ? 'Start with the basics. Variants and reorder levels come right after saving.' : 'Start with the basics. Variants, prices and pictures come right after saving.'
+            : `${activeVariants} active ${activeVariants === 1 ? 'variant' : 'variants'} · ${
+                isRawMaterial ? `${formatWithUnit(product.available_quantity, product.unit)} in stock` : `${formatQuantity(product.available_quantity)} available to sell`
+              }`
         }
         action={
           canManage ? (
@@ -140,7 +165,7 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
               ) : null}
               <Button onClick={() => saveProduct.mutate()} disabled={saveProduct.isPending || !canSave || (!isNew && !isDirty)}>
                 {saveProduct.isPending ? <Spinner data-icon="inline-start" /> : null}
-                {isNew ? 'Create product' : isDirty ? 'Save changes' : 'Saved'}
+                {isNew ? (isRawMaterial ? 'Create raw material' : 'Create product') : isDirty ? 'Save changes' : 'Saved'}
               </Button>
             </>
           ) : null
@@ -148,7 +173,7 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
       />
 
       {saveProduct.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to save</AlertTitle>
           <AlertDescription>{saveProduct.error.message}</AlertDescription>
@@ -158,8 +183,12 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
       {!isNew && product.variants.length === 0 ? (
         <Alert>
           <AlertCircleIcon />
-          <AlertTitle>This product can’t be sold yet</AlertTitle>
-          <AlertDescription>Add at least one variant with a price so customers and staff can order it.</AlertDescription>
+          <AlertTitle>{isRawMaterial ? 'No variants yet' : 'This product can’t be sold yet'}</AlertTitle>
+          <AlertDescription>
+            {isRawMaterial
+              ? 'Add at least one variant so it can be bought and used in recipes.'
+              : 'Add at least one variant with a price so customers and staff can order it.'}
+          </AlertDescription>
         </Alert>
       ) : null}
 
@@ -171,7 +200,26 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
             </CardHeader>
             <CardContent>
               <fieldset disabled={!canManage} className="contents">
-                <FieldGroup>
+                <div className="flex flex-col gap-4">
+                  <Field>
+                    <span id="kind-label" className="text-sm font-medium text-foreground">Type</span>
+                    <ToggleGroup
+                      variant="outline"
+                      aria-labelledby="kind-label"
+                      value={[form.kind]}
+                      onValueChange={(next) => {
+                        if (!next[0]) return
+                        const kind = next[0] as ProductKind
+                        // Follow the type's usual unit until someone picks one on purpose.
+                        const unit = form.unit === 'pc' && kind === 'raw_material' ? 'kg' : form.unit === 'kg' && kind === 'finished_good' ? 'pc' : form.unit
+                        setForm({ ...form, kind, unit, visibility: kind === 'raw_material' ? 'internal' : form.visibility })
+                      }}
+                    >
+                      <ToggleGroupItem value="finished_good">Finished good</ToggleGroupItem>
+                      <ToggleGroupItem value="raw_material">Raw material</ToggleGroupItem>
+                    </ToggleGroup>
+                    <FieldDescription>{KIND_HELP[form.kind]}</FieldDescription>
+                  </Field>
                   <Field>
                     <FieldLabel htmlFor="product-name">Name</FieldLabel>
                     <Input
@@ -215,6 +263,24 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
                     />
                   </Field>
                   <Field>
+                    <FieldLabel htmlFor="product-unit">Counted in</FieldLabel>
+                    <NativeSelect
+                      id="product-unit"
+                      className="w-full sm:max-w-40"
+                      value={form.unit}
+                      onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                    >
+                      {(UNITS.includes(form.unit) ? UNITS : [...UNITS, form.unit]).map((unit) => (
+                        <NativeSelectOption key={unit} value={unit}>
+                          {unit}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <FieldDescription>
+                      The unit stock, recipes and purchases are counted in: pieces for pottery, kilos for clay, litres for slip.
+                    </FieldDescription>
+                  </Field>
+                  <Field>
                     <FieldLabel htmlFor="product-category">Category</FieldLabel>
                     <NativeSelect
                       id="product-category"
@@ -230,25 +296,26 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
                       ))}
                     </NativeSelect>
                   </Field>
-                </FieldGroup>
+                </div>
               </fieldset>
             </CardContent>
           </Card>
 
           {product ? <VariantsCard product={product} canManage={canManage} /> : null}
-          {product && canManage && product.variants.length > 0 ? <CustomerPriceCard product={product} /> : null}
+          {product && !isRawMaterial && product.variants.length > 0 ? <RecipeCard product={product} canManage={canManage} /> : null}
+          {product && canManage && !isRawMaterial && product.variants.length > 0 ? <CustomerPriceCard product={product} /> : null}
         </div>
 
         <div className="flex flex-col gap-6">
           <Card>
             <CardHeader>
-              <CardTitle>Sales settings</CardTitle>
+              <CardTitle>{isRawMaterial ? 'Settings' : 'Sales settings'}</CardTitle>
             </CardHeader>
             <CardContent>
               <fieldset disabled={!canManage} className="contents">
-                <FieldGroup>
+                <div className="flex flex-col gap-4">
                   {!isNew ? (
-                    <Field orientation="horizontal">
+                    <Field className="flex-row items-center">
                       <Switch
                         id="product-active"
                         checked={form.is_active}
@@ -262,11 +329,17 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
                       </FieldLabel>
                     </Field>
                   ) : null}
+                  {isRawMaterial ? (
+                    <p className="text-sm text-muted-foreground">
+                      Raw materials are internal: they never appear in the store and cannot be ordered. They are bought through
+                      purchase orders and used by recipes.
+                    </p>
+                  ) : null}
+                  {isRawMaterial ? null : (
                   <Field>
-                    <FieldTitle id="visibility-label">Visibility</FieldTitle>
+                    <span id="visibility-label" className="text-sm font-medium text-foreground">Visibility</span>
                     <ToggleGroup
                       variant="outline"
-                      spacing={0}
                       aria-labelledby="visibility-label"
                       value={[form.visibility]}
                       onValueChange={(next) => {
@@ -279,11 +352,12 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
                     </ToggleGroup>
                     <FieldDescription>{VISIBILITY_HELP[form.visibility]}</FieldDescription>
                   </Field>
+                  )}
+                  {isRawMaterial ? null : (
                   <Field>
-                    <FieldTitle id="backorder-label">When out of stock</FieldTitle>
+                    <span id="backorder-label" className="text-sm font-medium text-foreground">When out of stock</span>
                     <ToggleGroup
                       variant="outline"
-                      spacing={0}
                       aria-labelledby="backorder-label"
                       value={[form.backorder_policy]}
                       onValueChange={(next) => {
@@ -299,14 +373,15 @@ function ProductEditor({ product, categories }: { product?: ProductDetail; categ
                         : 'Orders are limited to the quantity in stock.'}
                     </FieldDescription>
                   </Field>
-                </FieldGroup>
+                  )}
+                </div>
               </fieldset>
             </CardContent>
           </Card>
 
-          {product ? (
+          {product && !isRawMaterial ? (
             <ProductPicturesCard product={product} />
-          ) : (
+          ) : isRawMaterial ? null : (
             <Card>
               <CardHeader>
                 <CardTitle>Pictures</CardTitle>
@@ -324,13 +399,19 @@ function VariantsCard({ product, canManage }: { product: ProductDetail; canManag
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Variants & prices</CardTitle>
-        <CardDescription>Each size or finish you sell, with its own SKU, price and stock.</CardDescription>
+        <CardTitle>{product.kind === 'raw_material' ? 'Variants' : 'Variants & prices'}</CardTitle>
+        <CardDescription>
+          {product.kind === 'raw_material'
+            ? 'Each grade or pack size you buy, with its own SKU, reorder level and stock.'
+            : 'Each size or finish you sell, with its own SKU, price and stock.'}
+        </CardDescription>
         {canManage ? (
           <CardAction>
             <VariantDialog
               productId={product.id}
               productName={product.name}
+              productKind={product.kind}
+              unit={product.unit}
               trigger={
                 <Button size="sm">
                   <PlusIcon data-icon="inline-start" />
@@ -369,11 +450,23 @@ function VariantsCard({ product, canManage }: { product: ProductDetail; canManag
                   </span>
                 ),
               },
+              ...(product.kind === 'raw_material'
+                ? []
+                : [
+                    {
+                      key: 'price',
+                      header: 'Price',
+                      mobile: true,
+                      cell: (variant: ProductDetail['variants'][number]) => (
+                        <MoneyText amount={variant.base_price.amount} currency={variant.base_price.currency} />
+                      ),
+                    },
+                  ]),
               {
-                key: 'price',
-                header: 'Price',
-                mobile: true,
-                cell: (variant) => <MoneyText amount={variant.base_price.amount} currency={variant.base_price.currency} />,
+                key: 'reorder',
+                header: 'Reorder at',
+                cell: (variant) =>
+                  variant.reorder_level ? formatWithUnit(variant.reorder_level, product.unit, 4) : <span className="text-muted-foreground">—</span>,
               },
               {
                 key: 'stock',
@@ -384,7 +477,7 @@ function VariantsCard({ product, canManage }: { product: ProductDetail; canManag
                     <span className="flex flex-col gap-0.5">
                       <StockBadge status={variant.stock_status} quantity={variant.available_quantity} showQuantity />
                       {variant.on_hand !== undefined && variant.on_hand !== variant.available_quantity ? (
-                        <span className="text-xs text-muted-foreground">{formatQuantity(variant.on_hand)} on hand</span>
+                        <span className="text-xs text-muted-foreground">{formatWithUnit(variant.on_hand, product.unit)} on hand</span>
                       ) : null}
                     </span>
                   ) : (
@@ -398,6 +491,8 @@ function VariantsCard({ product, canManage }: { product: ProductDetail; canManag
                     <VariantDialog
                       productId={product.id}
                       productName={product.name}
+                      productKind={product.kind}
+                      unit={product.unit}
                       variant={variant}
                       trigger={
                         <Button variant="ghost" size="icon-sm" aria-label={`Edit ${variant.sku}`}>
@@ -443,12 +538,12 @@ function CustomerPriceCard({ product }: { product: ProductDetail }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {save.isError ? (
-          <Alert variant="destructive">
+          <Alert variant="error">
             <AlertCircleIcon />
             <AlertDescription>{save.error.message}</AlertDescription>
           </Alert>
         ) : null}
-        <FieldGroup>
+        <div className="flex flex-col gap-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="override-customer">Customer</FieldLabel>
@@ -491,7 +586,7 @@ function CustomerPriceCard({ product }: { product: ProductDetail }) {
               </FieldDescription>
             ) : null}
           </Field>
-        </FieldGroup>
+        </div>
       </CardContent>
       <CardFooter>
         <Button

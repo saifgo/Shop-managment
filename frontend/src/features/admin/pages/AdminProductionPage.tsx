@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { PlusIcon, Settings2Icon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
@@ -63,7 +63,6 @@ export function AdminProductionPage() {
           <>
             <ToggleGroup
               variant="outline"
-              spacing={0}
               value={[view]}
               onValueChange={(next) => {
                 if (next[0]) setView(next[0] as ProductionView)
@@ -75,7 +74,7 @@ export function AdminProductionPage() {
               <ToggleGroupItem value="demand">Demand planning</ToggleGroupItem>
             </ToggleGroup>
             {canManage ? (
-              <Button variant="outline" render={<Link to="/admin/production/settings" />} nativeButton={false}>
+              <Button variant="outline" render={<Link to="/admin/production/settings" />}>
                 <Settings2Icon data-icon="inline-start" />
                 Workflow
               </Button>

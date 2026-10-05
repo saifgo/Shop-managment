@@ -1,4 +1,5 @@
 import { errorMessage } from '@/lib/api/orders'
+import { authFetch } from '@/lib/api/client'
 
 function authHeaders(idempotencyKey?: string): Record<string, string> {
   const token = localStorage.getItem('tittawin.access_token') ?? undefined
@@ -76,13 +77,13 @@ export const purchasingApi = {
     if (params.per_page) query.set('per_page', String(params.per_page))
     const qs = query.toString()
 
-    return fetch(`${base}/api/suppliers${qs ? `?${qs}` : ''}`, {
+    return authFetch(`${base}/api/suppliers${qs ? `?${qs}` : ''}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then((r) => parseJson<{ items: SupplierSummary[]; meta: { total: number } }>(r))
   },
 
   createSupplier: (payload: CreateSupplierInput) =>
-    fetch(`${base}/api/suppliers`, {
+    authFetch(`${base}/api/suppliers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify(payload),
@@ -90,18 +91,18 @@ export const purchasingApi = {
 
   listPurchaseOrders: (params?: { supplier_id?: string }) => {
     const query = params?.supplier_id ? `?supplier_id=${params.supplier_id}` : ''
-    return fetch(`${base}/api/purchase-orders${query}`, {
+    return authFetch(`${base}/api/purchase-orders${query}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then((r) => parseJson<{ items: PurchaseOrderSummary[] }>(r))
   },
 
   getPurchaseOrder: (id: string) =>
-    fetch(`${base}/api/purchase-orders/${id}`, { headers: { Accept: 'application/json', ...authHeaders() } }).then((r) =>
+    authFetch(`${base}/api/purchase-orders/${id}`, { headers: { Accept: 'application/json', ...authHeaders() } }).then((r) =>
       parseJson<PurchaseOrderSummary>(r),
     ),
 
   createPurchaseOrder: (payload: CreatePurchaseOrderInput, idempotencyKey: string) =>
-    fetch(`${base}/api/purchase-orders`, {
+    authFetch(`${base}/api/purchase-orders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(idempotencyKey) },
       body: JSON.stringify(payload),
@@ -112,14 +113,21 @@ export const purchasingApi = {
     lines: Array<{ purchase_order_item_id: string; quantity: string }>,
     idempotencyKey: string,
   ) =>
-    fetch(`${base}/api/purchase-orders/${id}/receive`, {
+    authFetch(`${base}/api/purchase-orders/${id}/receive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(idempotencyKey) },
       body: JSON.stringify({ lines }),
     }).then((r) => parseJson<{ id: string; reference: string }>(r)),
 
+  cancelPurchaseOrder: (id: string, reason?: string) =>
+    authFetch(`${base}/api/purchase-orders/${id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
+      body: JSON.stringify({ reason }),
+    }).then((r) => parseJson<PurchaseOrderSummary>(r)),
+
   supplierBalance: (supplierId: string) =>
-    fetch(`${base}/api/suppliers/${supplierId}/balance`, { headers: { Accept: 'application/json', ...authHeaders() } }).then(
+    authFetch(`${base}/api/suppliers/${supplierId}/balance`, { headers: { Accept: 'application/json', ...authHeaders() } }).then(
       (r) => parseJson<{ amount: string; currency: string }>(r),
     ),
 }

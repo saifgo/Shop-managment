@@ -1,4 +1,5 @@
 import { errorMessage } from '@/lib/api/orders'
+import { authFetch } from '@/lib/api/client'
 
 function authHeaders(idempotencyKey?: string): Record<string, string> {
   const token = localStorage.getItem('tittawin.access_token') ?? undefined
@@ -61,46 +62,46 @@ export const returnsApi = {
     if (params?.order_id) search.set('order_id', params.order_id)
     if (params?.status) search.set('status', params.status)
     const query = search.toString()
-    return fetch(`${base}/api/returns${query ? `?${query}` : ''}`, {
+    return authFetch(`${base}/api/returns${query ? `?${query}` : ''}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then((r) => parseJson<{ items: ReturnSummary[]; meta: { total: number } }>(r))
   },
 
   get: (id: string) =>
-    fetch(`${base}/api/returns/${id}`, { headers: { Accept: 'application/json', ...authHeaders() } }).then((r) =>
+    authFetch(`${base}/api/returns/${id}`, { headers: { Accept: 'application/json', ...authHeaders() } }).then((r) =>
       parseJson<ReturnSummary>(r),
     ),
 
   create: (payload: { order_id: string; reason?: string; notes?: string; items: ReturnItemPayload[] }, idempotencyKey: string) =>
-    fetch(`${base}/api/returns`, {
+    authFetch(`${base}/api/returns`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(idempotencyKey) },
       body: JSON.stringify(payload),
     }).then((r) => parseJson<ReturnSummary>(r)),
 
   approve: (id: string, notes?: string) =>
-    fetch(`${base}/api/returns/${id}/approve`, {
+    authFetch(`${base}/api/returns/${id}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ notes }),
     }).then((r) => parseJson<ReturnSummary>(r)),
 
   receive: (id: string, notes?: string) =>
-    fetch(`${base}/api/returns/${id}/receive`, {
+    authFetch(`${base}/api/returns/${id}/receive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ notes }),
     }).then((r) => parseJson<ReturnSummary>(r)),
 
   inspect: (id: string, items: Array<{ return_item_id: string; condition: string; notes?: string }>, notes?: string) =>
-    fetch(`${base}/api/returns/${id}/inspect`, {
+    authFetch(`${base}/api/returns/${id}/inspect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ items, notes }),
     }).then((r) => parseJson<ReturnSummary>(r)),
 
   resolve: (id: string, payload: { resolution: string; invoice_id?: string; notes?: string }, idempotencyKey: string) =>
-    fetch(`${base}/api/returns/${id}/resolve`, {
+    authFetch(`${base}/api/returns/${id}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(idempotencyKey) },
       body: JSON.stringify(payload),

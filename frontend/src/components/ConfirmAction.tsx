@@ -7,8 +7,7 @@ import {
 } from 'react'
 import {
   AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
+  AlertDialogClose,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -16,6 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 
 interface ConfirmActionProps {
@@ -91,18 +91,17 @@ export function ConfirmAction({
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
-          <AlertDialogAction
+          <AlertDialogClose disabled={pending} render={<Button variant="outline" />}>
+            {cancelLabel}
+          </AlertDialogClose>
+          <Button
             variant={variant === 'destructive' ? 'destructive' : 'default'}
             disabled={pending}
-            onClick={(event) => {
-              event.preventDefault()
-              void handleConfirm()
-            }}
+            onClick={() => void handleConfirm()}
           >
-            {pending ? <Spinner data-icon="inline-start" /> : null}
+            {pending ? <Spinner /> : null}
             {confirmLabel}
-          </AlertDialogAction>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

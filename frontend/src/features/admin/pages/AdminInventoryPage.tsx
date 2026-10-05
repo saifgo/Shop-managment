@@ -1,13 +1,17 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { SlidersHorizontalIcon } from 'lucide-react'
+import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
+import { PaginationBar } from '@/components/PaginationBar'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable, type ResponsiveTableColumn } from '@/components/ResponsiveTable'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   StockAdjustmentDialog,
   type AdjustmentTarget,
@@ -15,13 +19,23 @@ import {
 import { useAuth } from '@/features/auth/hooks/useAuth'
 import { inventoryApi, type StockMovement, type StockRow } from '@/lib/api/inventory'
 import { PERMISSIONS } from '@/lib/auth/permissions'
+import { formatWithUnit } from '@/lib/format'
+
+type KindFilter = 'all' | NonNullable<Parameters<typeof inventoryApi.listStock>[2]>
+
+const CURRENCY = 'TND'
 
 const stockColumns: ResponsiveTableColumn<StockRow>[] = [
   {
     key: 'product',
     header: 'Product',
     primary: true,
-    cell: (row) => `${row.product_name} — ${row.variant_name}`,
+    cell: (row) => (
+      <span className="flex flex-wrap items-center gap-2">
+        {`${row.product_name} — ${row.variant_name}`}
+        {row.is_low_stock ? <Badge variant="warning">Low stock</Badge> : null}
+      </span>
+    ),
   },
   {
     key: 'sku',
@@ -33,20 +47,39 @@ const stockColumns: ResponsiveTableColumn<StockRow>[] = [
     key: 'on_hand',
     header: 'On hand',
     className: 'tabular-nums',
-    cell: (row) => row.physical_on_hand,
+    cell: (row) => formatWithUnit(row.physical_on_hand, row.unit, 4),
   },
   {
     key: 'reserved',
     header: 'Reserved',
     className: 'tabular-nums',
-    cell: (row) => row.reserved,
+    cell: (row) => formatWithUnit(row.reserved, row.unit, 4),
   },
   {
     key: 'available',
     header: 'Available',
     mobile: true,
     className: 'tabular-nums',
-    cell: (row) => row.available_to_sell,
+    cell: (row) => formatWithUnit(row.available_to_sell, row.unit, 4),
+  },
+  {
+    key: 'reorder_level',
+    header: 'Reorder at',
+    className: 'tabular-nums',
+    cell: (row) => (row.reorder_level === null ? '—' : formatWithUnit(row.reorder_level, row.unit, 4)),
+  },
+  {
+    key: 'average_cost',
+    header: 'Avg cost',
+    className: 'tabular-nums',
+    cell: (row) =>
+      Number(row.average_cost) > 0 ? <MoneyText amount={row.average_cost} currency={CURRENCY} /> : <span className="text-muted-foreground">Unknown</span>,
+  },
+  {
+    key: 'stock_value',
+    header: 'Value',
+    className: 'tabular-nums',
+    cell: (row) => <MoneyText amount={row.stock_value} currency={CURRENCY} />,
   },
   {
     key: 'demand',
@@ -89,6 +122,13 @@ const movementColumns: ResponsiveTableColumn<StockMovement>[] = [
     cell: (movement) => movement.quantity_delta,
   },
   {
+    key: 'unit_cost',
+    header: 'Unit cost',
+    className: 'tabular-nums',
+    cell: (movement) =>
+      movement.unit_cost && Number(movement.unit_cost) > 0 ? <MoneyText amount={movement.unit_cost} currency={CURRENCY} /> : '—',
+  },
+  {
     key: 'reserved',
     header: 'Reserved Δ',
     className: 'tabular-nums',
@@ -111,6 +151,9 @@ export function AdminInventoryPage() {
   const [selectedVariant, setSelectedVariant] = useState<string | undefined>()
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [adjustTarget, setAdjustTarget] = useState<AdjustmentTarget | null>(null)
+  const [kind, setKind] = useState<KindFilter>('all')
+  const [stockPage, setStockPage] = useState(1)
+  const [movementPage, setMovementPage] = useState(1)
   const { can } = useAuth()
   const canAdjust = can(PERMISSIONS.inventoryAdjust)
 
@@ -120,13 +163,15 @@ export function AdminInventoryPage() {
   }
 
   const { data: stock, isLoading: stockLoading, error: stockError } = useQuery({
-    queryKey: ['admin', 'inventory', 'stock'],
-    queryFn: () => inventoryApi.listStock(1),
+    queryKey: ['admin', 'inventory', 'stock', kind, stockPage],
+    queryFn: () => inventoryApi.listStock(stockPage, undefined, kind === 'all' ? undefined : kind),
+    placeholderData: (previous) => previous,
   })
 
   const { data: movements, isLoading: movementsLoading, error: movementsError } = useQuery({
-    queryKey: ['admin', 'inventory', 'movements', selectedVariant],
-    queryFn: () => inventoryApi.listMovements(1, selectedVariant),
+    queryKey: ['admin', 'inventory', 'movements', selectedVariant, movementPage],
+    queryFn: () => inventoryApi.listMovements(movementPage, selectedVariant),
+    placeholderData: (previous) => previous,
   })
 
   const filteredStock = stock?.items.filter((row) =>
@@ -152,7 +197,25 @@ export function AdminInventoryPage() {
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="font-heading text-lg font-medium">Stock balances</h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="font-heading text-lg font-medium">Stock balances</h2>
+            <ToggleGroup
+              variant="outline"
+              size="sm"
+              aria-label="Kind of item"
+              value={[kind]}
+              onValueChange={(next) => {
+                if (next[0]) {
+                  setKind(next[0] as KindFilter)
+                  setStockPage(1)
+                }
+              }}
+            >
+              <ToggleGroupItem value="all">All</ToggleGroupItem>
+              <ToggleGroupItem value="finished_good">Finished goods</ToggleGroupItem>
+              <ToggleGroupItem value="raw_material">Raw materials</ToggleGroupItem>
+            </ToggleGroup>
+          </div>
           <Field className="sm:w-64">
             <FieldLabel htmlFor="stock-filter" className="sr-only">
               Filter stock
@@ -206,7 +269,10 @@ export function AdminInventoryPage() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => setSelectedVariant(row.variant_id)}
+                    onClick={() => {
+                      setSelectedVariant(row.variant_id)
+                      setMovementPage(1)
+                    }}
                   >
                     Ledger
                   </Button>
@@ -215,6 +281,15 @@ export function AdminInventoryPage() {
             />
           ) : null}
         </QueryState>
+        {stock ? (
+          <PaginationBar
+            page={stock.meta.page}
+            totalPages={stock.meta.total_pages}
+            total={stock.meta.total}
+            noun="stock lines"
+            onPageChange={setStockPage}
+          />
+        ) : null}
       </div>
 
       <Separator />
@@ -225,7 +300,15 @@ export function AdminInventoryPage() {
             Movement ledger{selectedVariant ? ' (filtered)' : ''}
           </h2>
           {selectedVariant ? (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedVariant(undefined)}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedVariant(undefined)
+                setMovementPage(1)
+              }}
+            >
               Show all
             </Button>
           ) : null}
@@ -247,6 +330,15 @@ export function AdminInventoryPage() {
             />
           ) : null}
         </QueryState>
+        {movements ? (
+          <PaginationBar
+            page={movements.meta.page}
+            totalPages={movements.meta.total_pages}
+            total={movements.meta.total}
+            noun="movements"
+            onPageChange={setMovementPage}
+          />
+        ) : null}
       </div>
 
       <StockAdjustmentDialog open={adjustOpen} onOpenChange={setAdjustOpen} target={adjustTarget} />

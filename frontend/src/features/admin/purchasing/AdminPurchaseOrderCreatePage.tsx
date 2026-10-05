@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
@@ -88,7 +88,7 @@ export function AdminPurchaseOrderCreatePage() {
       <PageHeader title="New purchase order" description="Order stock from a supplier. Receive it later to add it to inventory." />
 
       {create.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to create the purchase order</AlertTitle>
           <AlertDescription>{create.error.message}</AlertDescription>
@@ -100,7 +100,7 @@ export function AdminPurchaseOrderCreatePage() {
           <CardTitle>Supplier</CardTitle>
         </CardHeader>
         <CardContent>
-          <FieldGroup className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-3">
             <Field data-invalid={showErrors && supplierId === '' ? true : undefined}>
               <FieldLabel htmlFor="po-supplier">Supplier</FieldLabel>
               <NativeSelect
@@ -140,7 +140,7 @@ export function AdminPurchaseOrderCreatePage() {
               <FieldLabel htmlFor="po-expected">Expected delivery</FieldLabel>
               <Input id="po-expected" type="date" value={expectedAt} onChange={(event) => setExpectedAt(event.target.value)} />
             </Field>
-          </FieldGroup>
+          </div>
         </CardContent>
       </Card>
 

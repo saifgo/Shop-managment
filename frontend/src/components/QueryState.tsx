@@ -57,7 +57,7 @@ export function QueryState({
 
   if (error) {
     return (
-      <Alert variant="destructive" className={cn(className)}>
+      <Alert variant="error" className={cn(className)}>
         <AlertCircleIcon />
         <AlertTitle>Something went wrong</AlertTitle>
         <AlertDescription>{resolveErrorMessage(error)}</AlertDescription>

@@ -1,4 +1,4 @@
-import { apiClient, apiUrl } from '@/lib/api/client'
+import { apiClient, apiUrl, authFetch } from '@/lib/api/client'
 import type { MoneyAmount, Paginated } from '@/lib/api/orders'
 import { getAccessToken } from '@/lib/auth/storage'
 
@@ -163,7 +163,7 @@ export const documentsApi = {
 
   /** Fetches the PDF with the bearer token (a plain link cannot send it) and saves it. */
   async downloadPdf(document: { id: string; document_number?: string | null }) {
-    const response = await fetch(apiUrl(`/api/documents/${document.id}/download`), {
+    const response = await authFetch(apiUrl(`/api/documents/${document.id}/download`), {
       headers: { Authorization: `Bearer ${token() ?? ''}` },
     })
 

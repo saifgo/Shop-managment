@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircleIcon, PlusIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,7 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -71,13 +71,13 @@ export function NewSupplierDialog() {
           </DialogHeader>
 
           {create.isError ? (
-            <Alert variant="destructive">
+            <Alert variant="error">
               <AlertCircleIcon />
               <AlertDescription>{create.error.message}</AlertDescription>
             </Alert>
           ) : null}
 
-          <FieldGroup>
+          <div className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
               <Field>
                 <FieldLabel htmlFor="supplier-code">Code</FieldLabel>
@@ -106,7 +106,7 @@ export function NewSupplierDialog() {
               <FieldLabel htmlFor="supplier-address">Address</FieldLabel>
               <Textarea id="supplier-address" rows={2} value={form.address} onChange={set('address')} />
             </Field>
-          </FieldGroup>
+          </div>
 
           <DialogFooter>
             <Button type="submit" disabled={create.isPending}>

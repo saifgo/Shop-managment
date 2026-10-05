@@ -93,6 +93,39 @@ final class FulfillmentFinanceTest extends AuthenticatedApiTestCase
         self::assertSame('0.0000', $balance['amount']);
     }
 
+    public function testMarginReportCostsTheGoodsThatLeftTheWorkshop(): void
+    {
+        $admin = $this->login();
+        $token = $admin['access_token'];
+        $customerId = $this->getPortalCustomerId($token);
+        $variantId = $this->findVariantIdBySku($token, 'BWL-4');
+
+        // Found stock at a known cost blends into the moving average.
+        $this->postJson($token, '/api/inventory/adjustments', [
+            'variant_id' => $variantId,
+            'quantity_delta' => '100',
+            'unit_cost' => '60',
+            'reason' => 'Opening stock',
+        ], 201);
+        $stock = $this->getJson($token, '/api/inventory/stock?variant_id=' . $variantId)['items'][0];
+        $averageCost = $stock['average_cost'];
+        self::assertGreaterThan(0, (float) $averageCost);
+
+        $order = $this->createAndConfirmOrder($token, $variantId, '2.0000', $customerId);
+        $delivery = $this->createDelivery($token, $order['id'], [
+            ['order_item_id' => $order['items'][0]['id'], 'quantity' => '2.0000'],
+        ]);
+        $this->shipDelivery($token, $delivery['id']);
+        $this->issueInvoice($token, $this->createInvoiceFromDelivery($token, $delivery['id'])['id']);
+
+        $margin = $this->getJson($token, '/api/reports/margin');
+        self::assertSame(bcmul($averageCost, '2', 4), $margin['cost']['amount']);
+        self::assertGreaterThan(0, (float) $margin['revenue']['amount']);
+        self::assertSame(bcsub($margin['revenue']['amount'], $margin['cost']['amount'], 4), $margin['margin']['amount']);
+        self::assertNotNull($margin['margin_pct']);
+        self::assertSame('0.0000', $margin['uncosted_units']);
+    }
+
     public function testPostedInvoiceImmutabilityRequiresCreditNote(): void
     {
         $admin = $this->login();
@@ -134,6 +167,30 @@ final class FulfillmentFinanceTest extends AuthenticatedApiTestCase
     }
 
     /** @return array<string, mixed> */
+    /**
+     * @param array<string, mixed> $body
+     *
+     * @return array<string, mixed>
+     */
+    private function postJson(string $token, string $uri, array $body, int $expectedStatus): array
+    {
+        $client = static::createClient();
+        $client->request('POST', $uri, server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token, 'CONTENT_TYPE' => 'application/json'], content: json_encode($body, JSON_THROW_ON_ERROR));
+        self::assertResponseStatusCodeSame($expectedStatus);
+
+        return json_decode($client->getResponse()->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
+    }
+
+    /** @return array<string, mixed> */
+    private function getJson(string $token, string $uri): array
+    {
+        $client = static::createClient();
+        $client->request('GET', $uri, server: ['HTTP_AUTHORIZATION' => 'Bearer ' . $token]);
+        self::assertResponseIsSuccessful();
+
+        return json_decode($client->getResponse()->getContent() ?: '', true, 512, JSON_THROW_ON_ERROR);
+    }
+
     private function createAndConfirmOrder(string $token, string $variantId, string $quantity, ?string $customerId = null): array
     {
         // Resolve before creating the order client: the lookup creates its own client,

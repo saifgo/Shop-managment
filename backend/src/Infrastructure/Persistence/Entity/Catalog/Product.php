@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Persistence\Entity\Catalog;
 
 use App\Domain\Catalog\BackorderPolicy;
+use App\Domain\Catalog\ProductKind;
 use App\Domain\Catalog\Visibility;
 use App\Domain\Shared\CompanyScoped;
 use App\Domain\Shared\EntityId;
@@ -43,6 +44,13 @@ class Product implements CompanyScoped
     #[ORM\Column(name: 'backorder_policy', length: 16, enumType: BackorderPolicy::class)]
     private BackorderPolicy $backorderPolicy;
 
+    #[ORM\Column(length: 16, enumType: ProductKind::class, options: ['default' => 'finished_good'])]
+    private ProductKind $kind = ProductKind::FinishedGood;
+
+    /** Unit of measure the stock is counted in: pc, kg, l, m... */
+    #[ORM\Column(length: 16, options: ['default' => 'pc'])]
+    private string $unit = 'pc';
+
     #[ORM\Column(name: 'is_active', options: ['default' => true])]
     private bool $isActive = true;
 
@@ -70,6 +78,8 @@ class Product implements CompanyScoped
         BackorderPolicy $backorderPolicy,
         ?Category $category = null,
         ?string $description = null,
+        ProductKind $kind = ProductKind::FinishedGood,
+        string $unit = 'pc',
     ) {
         $this->id = $id->toString();
         $this->companyId = $companyId->toString();
@@ -79,6 +89,8 @@ class Product implements CompanyScoped
         $this->backorderPolicy = $backorderPolicy;
         $this->category = $category;
         $this->description = $description;
+        $this->kind = $kind;
+        $this->unit = $unit;
         $this->createdAt = new \DateTimeImmutable();
         $this->updatedAt = $this->createdAt;
         $this->variants = new ArrayCollection();
@@ -118,6 +130,16 @@ class Product implements CompanyScoped
     public function getBackorderPolicy(): BackorderPolicy
     {
         return $this->backorderPolicy;
+    }
+
+    public function getKind(): ProductKind
+    {
+        return $this->kind;
+    }
+
+    public function getUnit(): string
+    {
+        return $this->unit;
     }
 
     public function isActive(): bool
@@ -169,6 +191,8 @@ class Product implements CompanyScoped
         BackorderPolicy $backorderPolicy,
         ?Category $category,
         bool $isActive,
+        ?ProductKind $kind = null,
+        ?string $unit = null,
     ): void {
         $this->name = $name;
         $this->slug = $slug;
@@ -177,6 +201,8 @@ class Product implements CompanyScoped
         $this->backorderPolicy = $backorderPolicy;
         $this->category = $category;
         $this->isActive = $isActive;
+        $this->kind = $kind ?? $this->kind;
+        $this->unit = $unit ?? $this->unit;
         $this->touch();
     }
 

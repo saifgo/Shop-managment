@@ -8,6 +8,7 @@ enum StockMovementType: string
 {
     case PurchaseReceipt = 'PURCHASE_RECEIPT';
     case ProductionReceipt = 'PRODUCTION_RECEIPT';
+    case ProductionConsumption = 'PRODUCTION_CONSUMPTION';
     case SaleReservation = 'SALE_RESERVATION';
     case SaleShipment = 'SALE_SHIPMENT';
     case ReturnReceipt = 'RETURN_RECEIPT';

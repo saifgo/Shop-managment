@@ -1,3 +1,5 @@
+import { authFetch } from '@/lib/api/client'
+
 function authHeaders(): Record<string, string> {
   const token = localStorage.getItem('tittawin.access_token') ?? undefined
   const headers: Record<string, string> = {}
@@ -71,7 +73,7 @@ export interface PortalDashboardSummary {
 
 export const dashboardApi = {
   admin: () =>
-    fetch(`${base}/api/dashboard/admin`, {
+    authFetch(`${base}/api/dashboard/admin`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error('Failed to load admin dashboard')
@@ -79,7 +81,7 @@ export const dashboardApi = {
     }),
 
   portal: () =>
-    fetch(`${base}/api/dashboard/portal`, {
+    authFetch(`${base}/api/dashboard/portal`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error('Failed to load portal dashboard')

@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace App\Application\Reporting;
 
 use App\Application\Finance\FinanceProjectionService;
+use App\Application\Catalog\ProductService;
+use App\Application\Production\ProductionYieldService;
+use App\Domain\Inventory\StockMovementType;
+use App\Infrastructure\Persistence\Entity\Inventory\StockMovement;
 use App\Domain\Documents\DocumentType;
 use App\Domain\Documents\InvoiceStatus;
 use App\Domain\Shared\Money;
@@ -12,7 +16,6 @@ use App\Infrastructure\Persistence\Entity\Documents\CommercialDocument;
 use App\Infrastructure\Persistence\Entity\Documents\DocumentLine;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Inventory\StockBalance;
-use App\Infrastructure\Persistence\Entity\Production\StageExecution;
 use App\Infrastructure\Persistence\Entity\Purchasing\SupplierInvoice;
 use App\Infrastructure\Persistence\Entity\Purchasing\SupplierPaymentAllocation;
 use App\Infrastructure\Persistence\Entity\Sales\Order;
@@ -23,6 +26,7 @@ final class ReportService
     public function __construct(
         private EntityManagerInterface $entityManager,
         private FinanceProjectionService $financeProjectionService,
+        private ProductionYieldService $productionYieldService,
     ) {}
 
     /** @return array<string, mixed> */
@@ -49,32 +53,68 @@ final class ReportService
         ];
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Gross margin: what was invoiced (net of VAT and credit notes) against what the pieces that
+     * left the workshop cost, valued at the moving-average cost they were issued at. Pieces with
+     * no known cost (no recipe, no purchase price) count as zero, which overstates the margin;
+     * `uncosted_units` says how many so the figure is not trusted blindly.
+     *
+     * @return array<string, mixed>
+     */
     public function margin(User $user, ?string $from = null, ?string $to = null): array
     {
         $companyId = $user->companyId()->toString();
         $currency = 'TND';
 
-        $qb = $this->entityManager->createQueryBuilder()
-            ->select('COALESCE(SUM(l.lineTotalAmount), 0) AS revenue')
-            ->from(DocumentLine::class, 'l')
-            ->join('l.document', 'd')
-            ->where('d.companyId = :companyId')
-            ->andWhere('d.documentType = :type')
-            ->andWhere('d.isPosted = true')
-            ->setParameter('companyId', $companyId)
-            ->setParameter('type', DocumentType::Invoice);
+        $revenue = '0.0000';
+        foreach ([[DocumentType::Invoice, 1], [DocumentType::CreditNote, -1]] as [$type, $sign]) {
+            $qb = $this->entityManager->createQueryBuilder()
+                ->select('COALESCE(SUM(l.lineSubtotalAmount), 0)')
+                ->from(DocumentLine::class, 'l')
+                ->join('l.document', 'd')
+                ->where('d.companyId = :companyId')
+                ->andWhere('d.documentType = :type')
+                ->andWhere('d.isPosted = true')
+                ->andWhere('d.status != :cancelled')
+                ->setParameter('companyId', $companyId)
+                ->setParameter('type', $type)
+                ->setParameter('cancelled', InvoiceStatus::Cancelled->value);
+            $this->applyDateRange($qb, 'd.issuedAt', $from, $to);
+            $amount = bcadd((string) $qb->getQuery()->getSingleScalarResult(), '0', 4);
+            $revenue = $sign > 0 ? bcadd($revenue, $amount, 4) : bcsub($revenue, $amount, 4);
+        }
 
-        $this->applyDateRange($qb, 'd.issuedAt', $from, $to);
-        $revenue = (string) $qb->getQuery()->getSingleScalarResult();
+        $cost = '0.0000';
+        $uncosted = '0.0000';
+        foreach ([[StockMovementType::SaleShipment, 1], [StockMovementType::ReturnReceipt, -1]] as [$movementType, $sign]) {
+            $qb = $this->entityManager->createQueryBuilder()
+                ->select(
+                    'COALESCE(SUM(ABS(m.quantityDelta) * COALESCE(m.unitCost, 0)), 0) AS cost',
+                    'COALESCE(SUM(CASE WHEN COALESCE(m.unitCost, 0) = 0 THEN ABS(m.quantityDelta) ELSE 0 END), 0) AS uncosted',
+                )
+                ->from(StockMovement::class, 'm')
+                ->where('m.companyId = :companyId')
+                ->andWhere('m.movementType = :type')
+                ->setParameter('companyId', $companyId)
+                ->setParameter('type', $movementType);
+            $this->applyDateRange($qb, 'm.createdAt', $from, $to);
+            $row = $qb->getQuery()->getSingleResult();
+            $amount = bcadd((string) $row['cost'], '0', 4);
+            $units = bcadd((string) $row['uncosted'], '0', 4);
+            $cost = $sign > 0 ? bcadd($cost, $amount, 4) : bcsub($cost, $amount, 4);
+            $uncosted = $sign > 0 ? bcadd($uncosted, $units, 4) : bcsub($uncosted, $units, 4);
+        }
+
+        $margin = bcsub($revenue, $cost, 4);
 
         return [
             'period' => ['from' => $from, 'to' => $to],
             'revenue' => ['amount' => Money::of($revenue, $currency)->amount(), 'currency' => $currency],
-            'cost' => null,
-            'margin' => null,
-            'margin_pct' => null,
-            'note' => 'Cost data unavailable; margin requires purchase cost linkage.',
+            'cost' => ['amount' => Money::of($cost, $currency)->amount(), 'currency' => $currency],
+            'margin' => ['amount' => bcadd($margin, '0', 4), 'currency' => $currency],
+            'margin_pct' => bccomp($revenue, '0', 4) > 0 ? bcmul(bcdiv($margin, $revenue, 6), '100', 2) : null,
+            'uncosted_units' => bccomp($uncosted, '0', 4) > 0 ? $uncosted : '0.0000',
+            'note' => 'Revenue excludes VAT and credit notes. Cost is the average cost of the goods shipped, net of sellable returns.',
         ];
     }
 
@@ -92,61 +132,44 @@ final class ReportService
             ->getResult();
 
         $items = [];
+        $value = ['finished_good' => '0.0000', 'raw_material' => '0.0000'];
 
         foreach ($balances as $balance) {
             $variant = $balance->getVariant();
+            $product = $variant->getProduct();
+            $available = $balance->getAvailableToSell()->amount();
+            $stockValue = $balance->getValue();
+            $value[$product->getKind()->value] = bcadd($value[$product->getKind()->value], $stockValue, 4);
             $items[] = [
                 'variant_id' => $variant->getId(),
                 'sku' => $variant->getSku(),
-                'product_name' => $variant->getProduct()->getName(),
+                'product_name' => $product->getName(),
+                'kind' => $product->getKind()->value,
+                'unit' => $product->getUnit(),
                 'physical_on_hand' => $balance->getPhysicalOnHand()->amount(),
                 'reserved' => $balance->getReserved()->amount(),
-                'available_to_sell' => $balance->getAvailableToSell()->amount(),
-                'is_low_stock' => bccomp($balance->getAvailableToSell()->amount(), '5.0000', 4) < 0,
+                'available_to_sell' => $available,
+                'reorder_level' => $variant->getReorderLevel(),
+                'average_cost' => $balance->getAverageCost(),
+                'stock_value' => $stockValue,
+                'is_low_stock' => $variant->isLowStock($available, ProductService::LOW_STOCK_THRESHOLD),
             ];
         }
 
         return [
             'items' => $items,
             'low_stock_count' => count(array_filter($items, static fn(array $item): bool => $item['is_low_stock'])),
+            'total_stock_value' => bcadd($value['finished_good'], $value['raw_material'], 4),
+            'finished_goods_value' => $value['finished_good'],
+            'raw_materials_value' => $value['raw_material'],
+            'currency' => 'TND',
         ];
     }
 
     /** @return array<string, mixed> */
     public function productionYield(User $user, ?string $from = null, ?string $to = null): array
     {
-        $companyId = $user->companyId()->toString();
-        $qb = $this->entityManager->createQueryBuilder()
-            ->select(
-                'COALESCE(SUM(se.inputQuantity), 0) AS input_total',
-                'COALESCE(SUM(se.acceptedOutputQuantity), 0) AS output_total',
-                'COALESCE(SUM(se.lossQuantity), 0) AS loss_total',
-                'COUNT(se.id) AS stage_count',
-            )
-            ->from(StageExecution::class, 'se')
-            ->join('se.productionOrder', 'p')
-            ->where('p.companyId = :companyId')
-            ->andWhere('se.completedAt IS NOT NULL')
-            ->setParameter('companyId', $companyId);
-
-        $this->applyDateRange($qb, 'se.completedAt', $from, $to);
-        $result = $qb->getQuery()->getSingleResult();
-
-        $input = (string) ($result['input_total'] ?? '0.0000');
-        $output = (string) ($result['output_total'] ?? '0.0000');
-        $loss = (string) ($result['loss_total'] ?? '0.0000');
-        $yieldPct = bccomp($input, '0.0000', 4) > 0
-            ? bcmul(bcdiv($output, $input, 6), '100', 2)
-            : null;
-
-        return [
-            'period' => ['from' => $from, 'to' => $to],
-            'stage_count' => (int) ($result['stage_count'] ?? 0),
-            'input_total' => $input,
-            'output_total' => $output,
-            'loss_total' => $loss,
-            'yield_pct' => $yieldPct,
-        ];
+        return $this->productionYieldService->summary($user->companyId()->toString(), $from, $to);
     }
 
     /** @return array<string, mixed> */

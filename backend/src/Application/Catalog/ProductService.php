@@ -7,15 +7,18 @@ namespace App\Application\Catalog;
 use App\Application\Inventory\AvailabilityService;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Catalog\BackorderPolicy;
+use App\Domain\Catalog\ProductKind;
 use App\Domain\Catalog\Visibility;
 use App\Domain\Shared\EntityId;
 use App\Domain\Shared\Money;
+use App\Domain\Shared\Quantity;
 use App\Infrastructure\Persistence\Entity\Catalog\Category;
 use App\Infrastructure\Persistence\Entity\Catalog\Product;
 use App\Infrastructure\Persistence\Entity\Catalog\ProductMedia;
 use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Inventory\StockBalance;
+use App\Infrastructure\Persistence\Entity\Inventory\StockMovement;
 use App\Infrastructure\Persistence\UnitOfWork;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
@@ -60,6 +63,7 @@ final class ProductService implements ResetInterface
         ?string $search,
         bool $portalView,
         ?string $status = null,
+        ?string $kind = null,
     ): PaginatedResult {
         $companyId = $user->companyId()->toString();
         $qb = $this->entityManager->createQueryBuilder()
@@ -72,10 +76,16 @@ final class ProductService implements ResetInterface
         if ($portalView) {
             $qb->andWhere('p.visibility = :visibility')
                 ->andWhere('p.isActive = true')
-                ->setParameter('visibility', Visibility::Public->value);
+                ->andWhere('p.kind = :kind')
+                ->setParameter('visibility', Visibility::Public->value)
+                ->setParameter('kind', ProductKind::FinishedGood->value);
         } elseif ($visibility !== null && $visibility !== '') {
             $qb->andWhere('p.visibility = :visibility')
                 ->setParameter('visibility', $visibility);
+        }
+
+        if (!$portalView && $kind !== null && ProductKind::tryFrom($kind) !== null) {
+            $qb->andWhere('p.kind = :listKind')->setParameter('listKind', $kind);
         }
 
         if (!$portalView && $status === 'active') {
@@ -123,7 +133,7 @@ final class ProductService implements ResetInterface
     {
         $product = $this->findProductForUser($user, $productId);
 
-        if ($portalView && ($product->getVisibility() !== Visibility::Public || !$product->isActive())) {
+        if ($portalView && ($product->getVisibility() !== Visibility::Public || !$product->isActive() || !$product->getKind()->isSellable())) {
             throw new NotFoundHttpException('Product not found.');
         }
 
@@ -139,16 +149,19 @@ final class ProductService implements ResetInterface
     {
         $category = $this->resolveCategory($user, $data['category_id'] ?? null);
         $this->assertSlugAvailable($user, $data['slug']);
+        $kind = ProductKind::from($data['kind'] ?? 'finished_good');
 
         $product = new Product(
             id: EntityId::generate(),
             companyId: $user->companyId(),
             name: $data['name'],
             slug: $data['slug'],
-            visibility: Visibility::from($data['visibility']),
+            visibility: $this->visibilityFor($kind, $data['visibility']),
             backorderPolicy: BackorderPolicy::from($data['backorder_policy']),
             category: $category,
             description: $data['description'] ?? null,
+            kind: $kind,
+            unit: trim($data['unit'] ?? 'pc'),
         );
 
         $this->entityManager->persist($product);
@@ -168,15 +181,22 @@ final class ProductService implements ResetInterface
         $product = $this->findProductForUser($user, $productId);
         $category = $this->resolveCategory($user, $data['category_id'] ?? null);
         $this->assertSlugAvailable($user, $data['slug'], $product->getId());
+        $kind = isset($data['kind']) ? ProductKind::from($data['kind']) : $product->getKind();
+
+        if ($kind !== $product->getKind() && $this->hasStockHistory($product)) {
+            throw new ConflictHttpException('This product already has stock movements, so it can no longer change between finished good and raw material.');
+        }
 
         $product->update(
             name: $data['name'],
             slug: $data['slug'],
             description: $data['description'] ?? null,
-            visibility: Visibility::from($data['visibility']),
+            visibility: $this->visibilityFor($kind, $data['visibility']),
             backorderPolicy: BackorderPolicy::from($data['backorder_policy']),
             category: $category,
             isActive: (bool) ($data['is_active'] ?? true),
+            kind: $kind,
+            unit: isset($data['unit']) ? trim($data['unit']) : null,
         );
 
         $this->unitOfWork->flush();
@@ -203,6 +223,7 @@ final class ProductService implements ResetInterface
             basePrice: Money::of($data['base_price']['amount'], $data['base_price']['currency']),
             attributes: $data['attributes'] ?? [],
         );
+        $variant->changeReorderLevel($this->normalizeReorderLevel($data['reorder_level'] ?? null));
 
         $this->entityManager->persist($variant);
         $this->unitOfWork->flush();
@@ -211,7 +232,7 @@ final class ProductService implements ResetInterface
     }
 
     /**
-     * @param array{sku: string, name: string, base_price: array{amount: string, currency: string}, attributes: array<string, string>, is_active: bool} $data
+     * @param array{sku: string, name: string, base_price: array{amount: string, currency: string}, attributes: array<string, string>, is_active: bool, reorder_level?: string|null} $data
      *
      * @return array<string, mixed>
      */
@@ -240,6 +261,7 @@ final class ProductService implements ResetInterface
             attributes: $data['attributes'],
             isActive: $data['is_active'],
         );
+        $variant->changeReorderLevel($this->normalizeReorderLevel($data['reorder_level'] ?? null));
 
         $this->unitOfWork->flush();
 
@@ -253,7 +275,7 @@ final class ProductService implements ResetInterface
     {
         $product = $this->findProductForUser($user, $productId);
 
-        if ($portalView && ($product->getVisibility() !== Visibility::Public || !$product->isActive())) {
+        if ($portalView && ($product->getVisibility() !== Visibility::Public || !$product->isActive() || !$product->getKind()->isSellable())) {
             throw new NotFoundHttpException('Product not found.');
         }
 
@@ -353,13 +375,57 @@ final class ProductService implements ResetInterface
         return $this->stockCache[$variant->getId()] ?? ['on_hand' => '0.0000', 'available' => '0.0000'];
     }
 
-    private static function stockStatus(string $available): string
+    private static function stockStatus(string $available, bool $isLow): string
     {
         if (bccomp($available, '0', 4) <= 0) {
             return 'out_of_stock';
         }
 
-        return bccomp($available, self::LOW_STOCK_THRESHOLD, 4) < 0 ? 'low_stock' : 'in_stock';
+        return $isLow ? 'low_stock' : 'in_stock';
+    }
+
+    /**
+     * Finished goods are low when the product's total drops under the shop-wide default; any
+     * variant with its own reorder level that has been reached also flags the product.
+     *
+     * @param list<ProductVariant> $variants
+     */
+    private function isProductLow(Product $product, array $variants, User $user, string $totalAvailable): bool
+    {
+        foreach ($variants as $variant) {
+            if ($variant->getReorderLevel() !== null && $variant->isLowStock($this->stockFor($user, $variant)['available'], self::LOW_STOCK_THRESHOLD)) {
+                return true;
+            }
+        }
+
+        return $product->getKind()->isSellable() && bccomp($totalAvailable, self::LOW_STOCK_THRESHOLD, 4) < 0;
+    }
+
+    private function hasStockHistory(Product $product): bool
+    {
+        return (int) $this->entityManager->createQueryBuilder()
+            ->select('COUNT(m.id)')
+            ->from(StockMovement::class, 'm')
+            ->join('m.variant', 'v')
+            ->where('v.product = :product')
+            ->setParameter('product', $product)
+            ->getQuery()
+            ->getSingleScalarResult() > 0;
+    }
+
+    /** Raw materials are never shown to customers, whatever the form says. */
+    private function visibilityFor(ProductKind $kind, string $requested): Visibility
+    {
+        return $kind->isSellable() ? Visibility::from($requested) : Visibility::Internal;
+    }
+
+    private function normalizeReorderLevel(?string $level): ?string
+    {
+        if ($level === null || trim($level) === '') {
+            return null;
+        }
+
+        return Quantity::of(trim($level))->amount();
     }
 
     private function findProductForUser(User $user, string $productId): Product
@@ -472,6 +538,8 @@ final class ProductService implements ResetInterface
             'description' => $product->getDescription(),
             'visibility' => $product->getVisibility()->value,
             'backorder_policy' => $product->getBackorderPolicy()->value,
+            'kind' => $product->getKind()->value,
+            'unit' => $product->getUnit(),
             'is_active' => $product->isActive(),
             'category_id' => $product->getCategory()?->getId(),
             'category_name' => $product->getCategory()?->getName(),
@@ -479,7 +547,7 @@ final class ProductService implements ResetInterface
             'primary_image_url' => $primaryMedia instanceof ProductMedia ? $primaryMedia->getUrl() : null,
             'variant_count' => $variants->count(),
             'available_quantity' => $available,
-            'stock_status' => self::stockStatus($available),
+            'stock_status' => self::stockStatus($available, $this->isProductLow($product, array_values($variants->toArray()), $user, $available)),
         ];
     }
 
@@ -532,8 +600,10 @@ final class ProductService implements ResetInterface
                 'amount' => $variant->getBasePrice()->amount(),
                 'currency' => $variant->getBasePrice()->currency(),
             ],
+            'unit' => $variant->getProduct()->getUnit(),
+            'reorder_level' => $variant->getReorderLevel(),
             'available_quantity' => $this->positive($stock['available']),
-            'stock_status' => self::stockStatus($stock['available']),
+            'stock_status' => self::stockStatus($stock['available'], $variant->isLowStock($stock['available'], self::LOW_STOCK_THRESHOLD)),
         ];
 
         // Physical stock (including reserved units) is an internal figure.

@@ -47,6 +47,7 @@ final class ProductController extends AbstractController
             search: $request->query->get('search'),
             portalView: $portalView,
             status: $request->query->get('status'),
+            kind: $request->query->get('kind'),
         );
 
         return $this->json($result->toArray());
@@ -66,6 +67,8 @@ final class ProductController extends AbstractController
             'backorder_policy' => $payload->backorderPolicy,
             'category_id' => $payload->categoryId,
             'media' => $payload->media,
+            'kind' => $payload->kind,
+            'unit' => $payload->unit,
         ]);
 
         return $this->json($product, JsonResponse::HTTP_CREATED);
@@ -94,6 +97,8 @@ final class ProductController extends AbstractController
             'backorder_policy' => $payload->backorderPolicy,
             'category_id' => $payload->categoryId,
             'is_active' => $payload->isActive,
+            'kind' => $payload->kind,
+            'unit' => $payload->unit,
         ]);
 
         return $this->json($product);
@@ -119,6 +124,7 @@ final class ProductController extends AbstractController
             'name' => $payload->name,
             'base_price' => ['amount' => $payload->basePriceAmount, 'currency' => $payload->basePriceCurrency],
             'attributes' => $payload->attributes,
+            'reorder_level' => $payload->reorderLevel,
         ]);
 
         return $this->json($variant, JsonResponse::HTTP_CREATED);
@@ -136,6 +142,7 @@ final class ProductController extends AbstractController
             'base_price' => ['amount' => $payload->basePriceAmount, 'currency' => strtoupper($payload->basePriceCurrency)],
             'attributes' => $payload->attributes,
             'is_active' => $payload->isActive,
+            'reorder_level' => $payload->reorderLevel,
         ]));
     }
 
@@ -221,6 +228,11 @@ final readonly class CreateProductRequest
         #[SerializedName('category_id')]
         public ?string $categoryId = null,
         public array $media = [],
+        #[Assert\Choice(choices: ['finished_good', 'raw_material'])]
+        public string $kind = 'finished_good',
+        #[Assert\NotBlank]
+        #[Assert\Length(max: 16)]
+        public string $unit = 'pc',
     ) {
     }
 }
@@ -242,6 +254,10 @@ final readonly class UpdateProductRequest
         public ?string $categoryId = null,
         #[SerializedName('is_active')]
         public bool $isActive = true,
+        #[Assert\Choice(choices: ['finished_good', 'raw_material'])]
+        public ?string $kind = null,
+        #[Assert\Length(min: 1, max: 16)]
+        public ?string $unit = null,
     ) {
     }
 }
@@ -263,6 +279,9 @@ final readonly class CreateVariantRequest
         #[SerializedName('base_price_currency')]
         public string $basePriceCurrency,
         public array $attributes = [],
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a quantity such as 10 or 2.5.')]
+        #[SerializedName('reorder_level')]
+        public ?string $reorderLevel = null,
     ) {
     }
 }
@@ -288,6 +307,9 @@ final readonly class UpdateVariantRequest
         public array $attributes = [],
         #[SerializedName('is_active')]
         public bool $isActive = true,
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a quantity such as 10 or 2.5.')]
+        #[SerializedName('reorder_level')]
+        public ?string $reorderLevel = null,
     ) {
     }
 }

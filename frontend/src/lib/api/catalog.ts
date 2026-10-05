@@ -11,6 +11,8 @@ export interface ResolvedPrice extends MoneyValue {
   base_amount: string;
 }
 
+export type ProductKind = 'finished_good' | 'raw_material';
+
 export interface ProductSummary {
   id: string;
   name: string;
@@ -18,6 +20,10 @@ export interface ProductSummary {
   description: string | null;
   visibility: string;
   backorder_policy: string;
+  /** Finished goods are made and sold; raw materials (clay, glaze) are bought and consumed by production. */
+  kind: ProductKind;
+  /** Unit stock is counted in: pc, kg, l... */
+  unit: string;
   is_active: boolean;
   category_id: string | null;
   category_name: string | null;
@@ -39,6 +45,9 @@ export interface ProductVariant {
   is_active: boolean;
   price: ResolvedPrice;
   base_price: MoneyValue;
+  unit: string;
+  /** Stock level at or below which the item is flagged for re-ordering / re-making. */
+  reorder_level: string | null;
   available_quantity: string;
   stock_status: StockStatus;
   /** Admin only: physical stock including reserved units. */
@@ -52,6 +61,28 @@ export interface VariantInput {
   base_price_currency: string;
   attributes: Record<string, string>;
   is_active?: boolean;
+  reorder_level?: string | null;
+}
+
+export interface RecipeLine {
+  id: string;
+  component_variant_id: string;
+  sku: string;
+  product_name: string;
+  variant_name: string;
+  unit: string;
+  quantity_per_unit: string;
+  /** Current average cost of one unit of the raw material. */
+  unit_cost: string;
+  line_cost: string;
+}
+
+/** Raw materials one unit of a finished variant consumes. */
+export interface Recipe {
+  variant_id: string;
+  sku: string;
+  components: RecipeLine[];
+  estimated_material_cost: string;
 }
 
 export interface ProductDetail extends ProductSummary {
@@ -97,6 +128,7 @@ export const catalogApi = {
     visibility?: string;
     search?: string;
     status?: 'active' | 'inactive';
+    kind?: ProductKind;
   } = {}): Promise<Paginated<ProductSummary>> {
     const query = new URLSearchParams();
     if (params.page) query.set('page', String(params.page));
@@ -105,6 +137,7 @@ export const catalogApi = {
     if (params.visibility) query.set('visibility', params.visibility);
     if (params.search) query.set('search', params.search);
     if (params.status) query.set('status', params.status);
+    if (params.kind) query.set('kind', params.kind);
 
     const qs = query.toString();
 
@@ -129,6 +162,17 @@ export const catalogApi = {
 
   updateVariant(productId: string, variantId: string, body: VariantInput): Promise<ProductVariant> {
     return apiClient.patch<ProductVariant>(`/api/products/${productId}/variants/${variantId}`, body, token());
+  },
+
+  getRecipe(variantId: string): Promise<Recipe> {
+    return apiClient.get<Recipe>(`/api/variants/${variantId}/recipe`, token());
+  },
+
+  replaceRecipe(
+    variantId: string,
+    components: Array<{ component_variant_id: string; quantity_per_unit: string }>,
+  ): Promise<Recipe> {
+    return apiClient.put<Recipe>(`/api/variants/${variantId}/recipe`, { components }, token());
   },
 
   uploadProductMedia(productId: string, file: File, altText?: string): Promise<ProductDetail> {

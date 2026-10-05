@@ -96,7 +96,7 @@ export function AdminOrdersPage() {
         description="Confirm new orders, ship what is ready, and follow what is waiting for stock."
         action={
           <PermissionGate permission={PERMISSIONS.salesOrdersManage}>
-            <Button nativeButton={false} render={<Link to="/admin/orders/new" />}>
+            <Button render={<Link to="/admin/orders/new" />}>
               <PlusIcon data-icon="inline-start" />
               New order
             </Button>

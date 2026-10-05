@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { CheckIcon, CopyIcon, ExternalLinkIcon, Link2Icon, Link2OffIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -12,7 +12,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Spinner } from '@/components/ui/spinner'
 import { documentsApi, sharedDocumentsApi, type CommercialDocument } from '@/lib/api/documents'
 
@@ -74,9 +74,9 @@ export function DocumentShareDialog({ document, onChanged }: DocumentShareDialog
               onFocus={(event) => event.currentTarget.select()}
             />
             <InputGroupAddon align="inline-end">
-              <InputGroupButton size="icon-xs" aria-label="Copy link" onClick={() => void copy()}>
+              <Button variant="ghost" size="icon-xs" aria-label="Copy link" onClick={() => void copy()}>
                 {copied ? <CheckIcon /> : <CopyIcon />}
-              </InputGroupButton>
+              </Button>
             </InputGroupAddon>
           </InputGroup>
         ) : (
@@ -90,7 +90,7 @@ export function DocumentShareDialog({ document, onChanged }: DocumentShareDialog
                 {revoke.isPending ? <Spinner data-icon="inline-start" /> : <Link2OffIcon data-icon="inline-start" />}
                 Revoke link
               </Button>
-              <Button nativeButton={false} variant="outline" render={<a href={url} target="_blank" rel="noreferrer" />}>
+              <Button variant="outline" render={<a href={url} target="_blank" rel="noreferrer" />}>
                 <ExternalLinkIcon data-icon="inline-start" />
                 Open
               </Button>

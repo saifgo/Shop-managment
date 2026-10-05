@@ -16,7 +16,7 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/in
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { PermissionGate } from '@/features/auth/components/PermissionGate'
 import { useDebouncedValue } from '@/hooks/use-debounced-value'
-import { catalogApi, flattenCategories, type ProductSummary } from '@/lib/api/catalog'
+import { catalogApi, flattenCategories, type ProductKind, type ProductSummary } from '@/lib/api/catalog'
 import { PERMISSIONS } from '@/lib/auth/permissions'
 
 const PER_PAGE = 25
@@ -35,9 +35,13 @@ const columns: ResponsiveTableColumn<ProductSummary>[] = [
           iconClassName="size-4"
         />
         <span className="flex min-w-0 flex-col">
-          <span className="truncate font-medium underline-offset-4 group-hover:underline">{product.name}</span>
+          <span className="flex items-center gap-2">
+            <span className="truncate font-medium underline-offset-4 group-hover:underline">{product.name}</span>
+            {product.kind === 'raw_material' ? <Badge variant="outline">Raw material</Badge> : null}
+          </span>
           <span className="truncate text-xs text-muted-foreground">
             {product.variant_count} {product.variant_count === 1 ? 'variant' : 'variants'}
+            {product.kind === 'raw_material' ? ` · counted in ${product.unit}` : ''}
           </span>
         </span>
       </Link>
@@ -53,7 +57,9 @@ const columns: ResponsiveTableColumn<ProductSummary>[] = [
     header: 'From',
     mobile: true,
     cell: (product) =>
-      product.from_price ? (
+      product.kind === 'raw_material' ? (
+        <span className="text-muted-foreground">Not sold</span>
+      ) : product.from_price ? (
         <MoneyText amount={product.from_price.amount} currency={product.from_price.currency} />
       ) : (
         <span className="text-muted-foreground">No price</span>
@@ -90,10 +96,11 @@ export function AdminCatalogPage() {
   const [categoryId, setCategoryId] = useState('')
   const [status, setStatus] = useState<'' | 'active' | 'inactive'>('')
   const [visibility, setVisibility] = useState('')
+  const [kind, setKind] = useState<'' | ProductKind>('')
   const [page, setPage] = useState(1)
   const debouncedSearch = useDebouncedValue(search.trim())
 
-  const filters = { search: debouncedSearch, categoryId, status, visibility, page }
+  const filters = { search: debouncedSearch, categoryId, status, visibility, kind, page }
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ['admin', 'products', filters],
     queryFn: () =>
@@ -104,6 +111,7 @@ export function AdminCatalogPage() {
         category: categoryId || undefined,
         status: status || undefined,
         visibility: visibility || undefined,
+        kind: kind || undefined,
       }),
     placeholderData: keepPreviousData,
   })
@@ -113,7 +121,7 @@ export function AdminCatalogPage() {
     queryFn: () => catalogApi.listCategories(),
   })
 
-  const hasFilters = Boolean(debouncedSearch || categoryId || status || visibility)
+  const hasFilters = Boolean(debouncedSearch || categoryId || status || visibility || kind)
   const resetPage = <T,>(setter: (value: T) => void) => (value: T) => {
     setter(value)
     setPage(1)
@@ -123,13 +131,17 @@ export function AdminCatalogPage() {
     <section className="flex flex-col gap-6">
       <PageHeader
         title="Products"
-        description="Everything you sell: pieces, variants, prices, pictures, and stock."
+        description="What you make and sell, and the raw materials it is made from."
         action={
           <>
             <PermissionGate permission={PERMISSIONS.catalogManage}>
               <Link to="/admin/catalog/categories" className={buttonVariants({ variant: 'outline' })}>
                 <TagsIcon data-icon="inline-start" />
                 Categories
+              </Link>
+              <Link to="/admin/catalog/new?kind=raw_material" className={buttonVariants({ variant: 'outline' })}>
+                <PlusIcon data-icon="inline-start" />
+                New raw material
               </Link>
               <Link to="/admin/catalog/new" className={buttonVariants()}>
                 <PlusIcon data-icon="inline-start" />
@@ -152,6 +164,16 @@ export function AdminCatalogPage() {
             aria-label="Search products"
           />
         </InputGroup>
+        <NativeSelect
+          className="md:w-44"
+          value={kind}
+          onChange={(e) => resetPage(setKind)(e.target.value as '' | ProductKind)}
+          aria-label="Filter by type"
+        >
+          <NativeSelectOption value="">Everything</NativeSelectOption>
+          <NativeSelectOption value="finished_good">Finished goods</NativeSelectOption>
+          <NativeSelectOption value="raw_material">Raw materials</NativeSelectOption>
+        </NativeSelect>
         <NativeSelect
           className="md:w-48"
           value={categoryId}

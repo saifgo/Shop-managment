@@ -40,6 +40,10 @@ class ProductVariant
     #[ORM\Column(type: 'json')]
     private array $attributes = [];
 
+    /** Stock level at or below which the item is flagged for reordering / re-making. Null = default policy. */
+    #[ORM\Column(name: 'reorder_level', type: 'decimal', precision: 19, scale: 4, nullable: true)]
+    private ?string $reorderLevel = null;
+
     #[ORM\Column(name: 'is_active', options: ['default' => true])]
     private bool $isActive = true;
 
@@ -110,6 +114,32 @@ class ProductVariant
     public function isActive(): bool
     {
         return $this->isActive;
+    }
+
+    public function getReorderLevel(): ?string
+    {
+        return $this->reorderLevel === null ? null : bcadd($this->reorderLevel, '0', 4);
+    }
+
+    public function changeReorderLevel(?string $reorderLevel): void
+    {
+        $this->reorderLevel = $reorderLevel;
+        $this->touch();
+    }
+
+    /**
+     * Whether `$available` calls for re-ordering / re-making. An explicit reorder level triggers at or
+     * below it. Finished goods without one fall back to the shop-wide default (strictly below it).
+     * Raw materials only alert when a level has been set: a default of 5 means something very
+     * different for kilos of clay than for vases.
+     */
+    public function isLowStock(string $available, string $default): bool
+    {
+        if ($this->reorderLevel !== null) {
+            return bccomp($available, (string) $this->getReorderLevel(), 4) <= 0;
+        }
+
+        return $this->product->getKind()->isSellable() && bccomp($available, $default, 4) < 0;
     }
 
     public function update(string $sku, string $name, Money $basePrice, array $attributes, bool $isActive): void

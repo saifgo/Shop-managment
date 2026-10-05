@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Application\Purchasing;
 
+use App\Application\Audit\AuditRecorder;
 use App\Application\Inventory\AvailabilityService;
 use App\Application\Inventory\StockLedgerService;
 use App\Application\Shared\PaginatedResult;
@@ -26,6 +27,7 @@ use App\Infrastructure\Persistence\Entity\Purchasing\SupplierPayment;
 use App\Infrastructure\Persistence\Entity\Purchasing\SupplierPaymentAllocation;
 use App\Infrastructure\Persistence\Entity\Purchasing\SupplierProduct;
 use App\Infrastructure\Persistence\UnitOfWork;
+use Doctrine\DBAL\LockMode;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Pagination\Paginator;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
@@ -39,6 +41,7 @@ final class PurchasingService
         private UnitOfWork $unitOfWork,
         private StockLedgerService $stockLedgerService,
         private AvailabilityService $availabilityService,
+        private AuditRecorder $auditRecorder,
     ) {}
 
     /**
@@ -249,7 +252,9 @@ final class PurchasingService
                 }
             }
 
-            $po = $this->findPurchaseOrder($user, $poId);
+            // Locked so two people receiving the same order cannot both pass the "remaining quantity" check.
+            $po = $this->findPurchaseOrder($user, $poId, lock: true);
+            $this->assertReceivable($po);
             $location = $this->availabilityService->requireDefaultLocation($user->companyId());
 
             if ($lines === []) {
@@ -279,7 +284,15 @@ final class PurchasingService
                     throw new BadRequestHttpException('Invalid PO item.');
                 }
 
-                $quantity = Quantity::of($linePayload['quantity']);
+                try {
+                    $quantity = Quantity::of($linePayload['quantity']);
+                } catch (\InvalidArgumentException) {
+                    throw new BadRequestHttpException('Receipt quantities must be numbers with at most 4 decimals.');
+                }
+
+                if ($quantity->isZero()) {
+                    throw new BadRequestHttpException('Receipt quantity must be greater than zero.');
+                }
 
                 if ($quantity->compare($poItem->getRemainingReceivableQuantity()) > 0) {
                     throw new BadRequestHttpException('Receipt quantity exceeds remaining PO quantity.');
@@ -306,6 +319,8 @@ final class PurchasingService
                     $receipt->getReference(),
                     'PO ' . $po->getReference(),
                     EntityId::fromString($user->getId()),
+                    // What we paid is what the stock costs: it feeds the moving-average cost.
+                    $poItem->getUnitPrice()->amount(),
                 );
             }
 
@@ -314,6 +329,49 @@ final class PurchasingService
 
             return $this->serializeReceipt($receipt);
         });
+    }
+
+    /**
+     * A PO that nothing has been received against can be cancelled (e.g. the supplier cannot deliver).
+     *
+     * @return array<string, mixed>
+     */
+    public function cancelPurchaseOrder(User $user, string $poId, ?string $reason = null): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $poId, $reason): array {
+            $po = $this->findPurchaseOrder($user, $poId, lock: true);
+
+            if ($po->getStatus() === PurchaseOrderStatus::Cancelled) {
+                return $this->serializePurchaseOrder($po);
+            }
+
+            if ($po->getStatus() !== PurchaseOrderStatus::Sent && $po->getStatus() !== PurchaseOrderStatus::Draft) {
+                throw new BadRequestHttpException('Goods have already been received against this purchase order, so it can no longer be cancelled.');
+            }
+
+            $po->setStatus(PurchaseOrderStatus::Cancelled);
+            $this->auditRecorder->record(
+                action: 'purchasing.order.cancelled',
+                payload: ['reference' => $po->getReference(), 'reason' => $reason !== null && trim($reason) !== '' ? trim($reason) : null],
+                companyId: $user->companyId(),
+                actorUserId: EntityId::fromString($user->getId()),
+                entityType: 'purchase_order',
+                entityId: EntityId::fromString($po->getId()),
+                flush: false,
+            );
+
+            return $this->serializePurchaseOrder($po);
+        });
+    }
+
+    private function assertReceivable(PurchaseOrder $po): void
+    {
+        if (!in_array($po->getStatus(), [PurchaseOrderStatus::Sent, PurchaseOrderStatus::PartiallyReceived], true)) {
+            throw new BadRequestHttpException(sprintf(
+                'A %s purchase order cannot receive goods.',
+                strtolower(str_replace('_', ' ', $po->getStatus()->value)),
+            ));
+        }
     }
 
     /**
@@ -497,13 +555,23 @@ final class PurchasingService
         return $variant;
     }
 
-    private function findPurchaseOrder(User $user, string $poId): PurchaseOrder
+    private function findPurchaseOrder(User $user, string $poId, bool $lock = false): PurchaseOrder
     {
+        $query = $this->entityManager->createQueryBuilder()
+            ->select('po')
+            ->from(PurchaseOrder::class, 'po')
+            ->where('po.id = :id')
+            ->andWhere('po.companyId = :companyId')
+            ->setParameter('id', $poId)
+            ->setParameter('companyId', $user->companyId()->toString())
+            ->getQuery();
+
+        if ($lock) {
+            $query->setLockMode(LockMode::PESSIMISTIC_WRITE);
+        }
+
         /** @var PurchaseOrder|null $po */
-        $po = $this->entityManager->getRepository(PurchaseOrder::class)->findOneBy([
-            'id' => $poId,
-            'companyId' => $user->companyId()->toString(),
-        ]);
+        $po = $query->getOneOrNullResult();
 
         if ($po === null) {
             throw new NotFoundHttpException('Purchase order not found.');

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Frame } from '@/components/ui/frame'
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 import {
   Table,
@@ -54,7 +55,7 @@ export function ResponsiveTable<T>({
   const { primary, fields } = resolveMobileColumns(columns)
 
   const table = (
-    <Table className={cn(wide && 'min-w-[48rem]')}>
+    <Table variant="card" className={cn(wide && 'min-w-[48rem]')}>
       <TableHeader>
         <TableRow>
           {columns.map((column) => (
@@ -62,7 +63,9 @@ export function ResponsiveTable<T>({
               {column.header}
             </TableHead>
           ))}
-          {rowAction ? <TableHead className="w-[1%] text-right">Actions</TableHead> : null}
+          {rowAction ? <TableHead className="w-[1%] text-right">
+              <span className="sr-only">Actions</span>
+            </TableHead> : null}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -88,7 +91,7 @@ export function ResponsiveTable<T>({
         {data.map((row) => (
           <div
             key={getRowKey(row)}
-            className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground"
+            className="flex flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground shadow-xs/5"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 font-medium">
@@ -111,14 +114,16 @@ export function ResponsiveTable<T>({
       </div>
 
       <div className="hidden md:block">
-        {wide ? (
-          <ScrollArea className="w-full">
-            <div className="min-w-[48rem]">{table}</div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        ) : (
-          table
-        )}
+        <Frame>
+          {wide ? (
+            <ScrollArea className="w-full">
+              <div className="min-w-[48rem]">{table}</div>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          ) : (
+            table
+          )}
+        </Frame>
       </div>
     </div>
   )

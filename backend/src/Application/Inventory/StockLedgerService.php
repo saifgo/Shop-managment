@@ -32,8 +32,11 @@ final class StockLedgerService
         ?string $reference = null,
         ?string $notes = null,
         ?EntityId $createdBy = null,
+        ?string $unitCost = null,
     ): StockMovement {
         $balance = $this->lockOrCreateBalance($companyId, $variant, $location);
+        // Applied first: it validates the movement and tells us the cost it is valued at.
+        $movementCost = $balance->applyMovement($quantityDelta, $reservedDelta, $unitCost);
 
         $movement = new StockMovement(
             id: EntityId::generate(),
@@ -48,9 +51,9 @@ final class StockLedgerService
             reference: $reference,
             notes: $notes,
             createdBy: $createdBy,
+            unitCost: $movementCost,
         );
 
-        $balance->applyMovement($quantityDelta, $reservedDelta);
         $this->entityManager->persist($movement);
 
         return $movement;

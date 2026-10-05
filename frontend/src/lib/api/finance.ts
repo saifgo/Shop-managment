@@ -1,4 +1,5 @@
 import { errorMessage, type MoneyAmount, type Paginated } from '@/lib/api/orders'
+import { authFetch } from '@/lib/api/client'
 
 export interface DeliverySummary {
   id: string
@@ -87,7 +88,7 @@ const base = import.meta.env.VITE_API_BASE_URL ?? ''
 export const deliveriesApi = {
   list(orderId?: string) {
     const query = orderId ? `?order_id=${orderId}` : ''
-    return fetch(`${base}/api/deliveries${query}`, {
+    return authFetch(`${base}/api/deliveries${query}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load deliveries'))
@@ -96,7 +97,7 @@ export const deliveriesApi = {
   },
 
   get(id: string) {
-    return fetch(`${base}/api/deliveries/${id}`, {
+    return authFetch(`${base}/api/deliveries/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load delivery'))
@@ -105,7 +106,7 @@ export const deliveriesApi = {
   },
 
   createFromOrder(orderId: string, lines: Array<{ order_item_id: string; quantity: string }>, notes?: string) {
-    return fetch(`${base}/api/orders/${orderId}/create-delivery`, {
+    return authFetch(`${base}/api/orders/${orderId}/create-delivery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify({ lines, notes }),
@@ -116,7 +117,7 @@ export const deliveriesApi = {
   },
 
   transition(id: string, status: string) {
-    return fetch(`${base}/api/deliveries/${id}/transition`, {
+    return authFetch(`${base}/api/deliveries/${id}/transition`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ status }),
@@ -129,7 +130,7 @@ export const deliveriesApi = {
 
 export const invoicesApi = {
   list(page = 1) {
-    return fetch(`${base}/api/invoices?page=${page}`, {
+    return authFetch(`${base}/api/invoices?page=${page}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load invoices'))
@@ -138,7 +139,7 @@ export const invoicesApi = {
   },
 
   get(id: string) {
-    return fetch(`${base}/api/invoices/${id}`, {
+    return authFetch(`${base}/api/invoices/${id}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     }).then(async (response) => {
       if (!response.ok) throw new Error(await errorMessage(response, 'Failed to load invoice'))
@@ -147,7 +148,7 @@ export const invoicesApi = {
   },
 
   createFromDelivery(deliveryId: string) {
-    return fetch(`${base}/api/invoices`, {
+    return authFetch(`${base}/api/invoices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify({ delivery_id: deliveryId }),
@@ -158,7 +159,7 @@ export const invoicesApi = {
   },
 
   issue(id: string, dueDate?: string) {
-    return fetch(`${base}/api/invoices/${id}/issue`, {
+    return authFetch(`${base}/api/invoices/${id}/issue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ due_date: dueDate }),
@@ -178,7 +179,7 @@ export const paymentsApi = {
     payment_date: string
     notes?: string
   }) {
-    return fetch(`${base}/api/payments`, {
+    return authFetch(`${base}/api/payments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders(crypto.randomUUID()) },
       body: JSON.stringify(payload),
@@ -189,7 +190,7 @@ export const paymentsApi = {
   },
 
   allocate(paymentId: string, allocations: Array<{ invoice_id: string; amount: string }>) {
-    return fetch(`${base}/api/payments/${paymentId}/allocate`, {
+    return authFetch(`${base}/api/payments/${paymentId}/allocate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
       body: JSON.stringify({ allocations }),

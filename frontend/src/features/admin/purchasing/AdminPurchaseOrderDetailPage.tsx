@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
+import { ConfirmAction } from '@/components/ConfirmAction'
 import { QueryState } from '@/components/QueryState'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
@@ -46,7 +47,20 @@ export function AdminPurchaseOrderDetailPage() {
     onError: (err) => toast.error(err.message),
   })
 
+  const cancelOrder = useMutation({
+    mutationFn: () => purchasingApi.cancelPurchaseOrder(id!),
+    onSuccess: () => {
+      toast.success('Purchase order cancelled.')
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'purchase-order', id] })
+      void queryClient.invalidateQueries({ queryKey: ['admin', 'purchase-orders'] })
+    },
+    onError: (err) => toast.error(err.message),
+  })
+
   const items = po?.items ?? []
+  // Once goods have come in the order is part of the stock history and can no longer be cancelled.
+  const canCancel =
+    can(PERMISSIONS.purchasingManage) && (po?.status === 'SENT' || po?.status === 'DRAFT') && items.every((item) => Number(item.quantity_received) === 0)
   const openItems = items.filter((item) => remaining(item) > 0)
   const canReceive = can(PERMISSIONS.purchasingManage) && openItems.length > 0 && po?.status !== 'CANCELLED'
 
@@ -70,7 +84,22 @@ export function AdminPurchaseOrderDetailPage() {
             <PageHeader
               title={po.reference}
               description={po.supplier_name}
-              action={<StatusBadge status={po.status} />}
+              action={
+                <>
+                  <StatusBadge status={po.status} />
+                  {canCancel ? (
+                    <ConfirmAction
+                      trigger={<Button variant="outline">Cancel order</Button>}
+                      title={`Cancel ${po.reference}?`}
+                      description="Use this when the supplier cannot deliver. Nothing has been received yet, so stock is not affected."
+                      confirmLabel="Cancel order"
+                      cancelLabel="Keep order"
+                      variant="destructive"
+                      onConfirm={() => cancelOrder.mutateAsync().then(() => undefined)}
+                    />
+                  ) : null}
+                </>
+              }
             />
 
             <Card>

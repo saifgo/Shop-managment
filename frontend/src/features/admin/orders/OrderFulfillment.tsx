@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { AlertCircleIcon, FileTextIcon, PackageCheckIcon, PackageIcon, TruckIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -234,7 +234,7 @@ function CreateDeliveryDialog({ order }: { order: OrderDetail }) {
           </DialogHeader>
 
           {create.isError ? (
-            <Alert variant="destructive">
+            <Alert variant="error">
               <AlertCircleIcon />
               <AlertDescription>{create.error.message}</AlertDescription>
             </Alert>

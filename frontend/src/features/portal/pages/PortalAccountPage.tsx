@@ -5,7 +5,7 @@ import { QueryState } from '@/components/QueryState'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { customersApi, type CustomerDetail } from '@/lib/api/customers'
@@ -67,7 +67,7 @@ function AccountForm({ profile }: { profile: CustomerDetail }) {
       <PageHeader title="Account" description="View and update your customer profile, contacts, and addresses." />
 
       {saveProfile.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to save</AlertTitle>
           <AlertDescription>Your profile could not be saved. Try again.</AlertDescription>
@@ -79,7 +79,7 @@ function AccountForm({ profile }: { profile: CustomerDetail }) {
           <CardTitle>Profile</CardTitle>
         </CardHeader>
         <CardContent>
-          <FieldGroup>
+          <div className="flex flex-col gap-4">
             <Field>
               <FieldLabel htmlFor="display-name">Display name</FieldLabel>
               <Input id="display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
@@ -87,7 +87,7 @@ function AccountForm({ profile }: { profile: CustomerDetail }) {
 
             <h3 className="font-heading text-sm font-medium">Primary contact</h3>
             {contacts.slice(0, 1).map((contact) => (
-              <FieldGroup key={contact.id}>
+              <div key={contact.id}>
                 <Field>
                   <FieldLabel htmlFor={`contact-name-${contact.id}`}>Name</FieldLabel>
                   <Input
@@ -122,12 +122,12 @@ function AccountForm({ profile }: { profile: CustomerDetail }) {
                     }
                   />
                 </Field>
-              </FieldGroup>
+              </div>
             ))}
 
             <h3 className="font-heading text-sm font-medium">Default address</h3>
             {addresses.slice(0, 1).map((address) => (
-              <FieldGroup key={address.id}>
+              <div key={address.id}>
                 <Field>
                   <FieldLabel htmlFor={`address-line1-${address.id}`}>Line 1</FieldLabel>
                   <Input
@@ -178,9 +178,9 @@ function AccountForm({ profile }: { profile: CustomerDetail }) {
                     }
                   />
                 </Field>
-              </FieldGroup>
+              </div>
             ))}
-          </FieldGroup>
+          </div>
         </CardContent>
         <CardFooter>
           <Button onClick={() => saveProfile.mutate()} disabled={saveProfile.isPending}>

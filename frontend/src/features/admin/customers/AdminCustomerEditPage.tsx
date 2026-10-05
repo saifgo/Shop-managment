@@ -8,7 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Field, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
@@ -112,7 +112,7 @@ function CustomerEditor({
       <PageHeader title={isNew ? 'New customer' : customer?.display_name ?? 'Customer'} />
 
       {saveCustomer.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to save</AlertTitle>
           <AlertDescription>The customer could not be saved. Check the fields and try again.</AlertDescription>
@@ -125,12 +125,11 @@ function CustomerEditor({
             <CardTitle>Details</CardTitle>
           </CardHeader>
           <CardContent>
-            <FieldGroup>
+            <div className="flex flex-col gap-4">
               <Field>
-                <FieldTitle id="customer-type-label">Type</FieldTitle>
+                <span id="customer-type-label" className="text-sm font-medium text-foreground">Type</span>
                 <ToggleGroup
                   variant="outline"
-                  spacing={0}
                   aria-labelledby="customer-type-label"
                   value={[form.type]}
                   onValueChange={(next) => {
@@ -184,7 +183,7 @@ function CustomerEditor({
                 />
               </Field>
               {!isNew ? (
-                <Field orientation="horizontal">
+                <Field className="flex-row items-center">
                   <Checkbox
                     id="customer-active"
                     checked={form.is_active}
@@ -193,7 +192,7 @@ function CustomerEditor({
                   <FieldLabel htmlFor="customer-active">Active</FieldLabel>
                 </Field>
               ) : null}
-            </FieldGroup>
+            </div>
           </CardContent>
           <CardFooter>
             <Button onClick={() => saveCustomer.mutate()} disabled={saveCustomer.isPending}>

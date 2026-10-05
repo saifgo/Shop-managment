@@ -71,7 +71,6 @@ export function SharedDocumentPage() {
             <Button
               variant="outline"
               className="flex-1 sm:flex-none"
-              nativeButton={false}
               render={<a href={sharedDocumentsApi.pdfUrl(token)} target="_blank" rel="noreferrer" />}
             >
               <ExternalLinkIcon data-icon="inline-start" />
@@ -79,7 +78,6 @@ export function SharedDocumentPage() {
             </Button>
             <Button
               className="flex-1 sm:flex-none"
-              nativeButton={false}
               render={<a href={sharedDocumentsApi.pdfUrl(token, true)} download={data?.filename} />}
             >
               <DownloadIcon data-icon="inline-start" />

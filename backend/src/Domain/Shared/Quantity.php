@@ -64,6 +64,14 @@ final readonly class Quantity
         return new self($result, $this->unit);
     }
 
+    /** Scales by another quantity (e.g. kilos of clay per piece x pieces), rounding half up to 4 decimals. */
+    public function times(self $factor): self
+    {
+        $product = bcmul($this->amount, $factor->amount, self::SCALE * 2);
+
+        return new self(bcadd($product, '0.00005', self::SCALE), $this->unit);
+    }
+
     public function isZero(): bool
     {
         return bccomp($this->amount, '0.0000', self::SCALE) === 0;

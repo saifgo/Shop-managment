@@ -5,12 +5,12 @@ import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
 import { AlertCircleIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { catalogApi, flattenCategories } from '@/lib/api/catalog'
 import { slugify } from '@/lib/format'
@@ -71,12 +71,12 @@ export function AdminCategoriesPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             {createCategory.isError ? (
-              <Alert variant="destructive">
+              <Alert variant="error">
                 <AlertCircleIcon />
                 <AlertDescription>{createCategory.error.message}</AlertDescription>
               </Alert>
             ) : null}
-            <FieldGroup>
+            <div className="flex flex-col gap-4">
               <Field>
                 <FieldLabel htmlFor="category-name">Name</FieldLabel>
                 <Input
@@ -110,7 +110,7 @@ export function AdminCategoriesPage() {
                   ))}
                 </NativeSelect>
               </Field>
-            </FieldGroup>
+            </div>
           </CardContent>
           <CardFooter>
             <Button onClick={() => createCategory.mutate()} disabled={createCategory.isPending || !form.name.trim()}>

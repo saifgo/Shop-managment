@@ -16,7 +16,6 @@ import {
 import {
   Field,
   FieldError,
-  FieldGroup,
   FieldLabel,
 } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
@@ -76,71 +75,107 @@ export function LoginPage({
   });
 
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center p-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <p className="text-muted-foreground">Tittawin</p>
-          <CardTitle>{title}</CardTitle>
-          <CardDescription>{subtitle}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="flex flex-col gap-6" onSubmit={onSubmit} noValidate>
-            <FieldGroup>
-              <Field data-invalid={errors.email ? true : undefined}>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
-                  aria-invalid={!!errors.email}
-                  {...register('email')}
-                />
-                <FieldError>{errors.email?.message}</FieldError>
-              </Field>
+    <div className="grid min-h-[100dvh] lg:grid-cols-[1fr_1.1fr]">
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-primary p-10 text-primary-foreground lg:flex">
+        <div className="flex items-center gap-2.5">
+          <span className="grid size-9 place-items-center rounded-lg bg-primary-foreground/12 text-base font-semibold ring-1 ring-primary-foreground/20">
+            T
+          </span>
+          <span className="text-lg font-semibold tracking-tight">Tittawin</span>
+        </div>
+        <div className="flex max-w-md flex-col gap-4">
+          <h2 className="font-heading text-3xl font-semibold leading-tight tracking-tight">
+            Orders, stock and production in one calm workspace.
+          </h2>
+          <p className="text-sm/6 text-primary-foreground/70">
+            Track every sale from quote to delivery, keep inventory accurate and
+            see what your workshop is making next.
+          </p>
+        </div>
+        <p className="text-xs text-primary-foreground/50">
+          © {new Date().getFullYear()} Tittawin
+        </p>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-24 -bottom-24 size-96 rounded-full bg-primary-foreground/6 blur-2xl"
+        />
+      </aside>
 
-              <Field data-invalid={errors.password ? true : undefined}>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  aria-invalid={!!errors.password}
-                  {...register('password')}
-                />
-                <FieldError>{errors.password?.message}</FieldError>
-              </Field>
-            </FieldGroup>
+      <main className="flex items-center justify-center bg-muted/40 p-6">
+        <div className="flex w-full max-w-sm flex-col gap-6">
+          <div className="flex items-center gap-2 lg:hidden">
+            <span className="grid size-8 place-items-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+              T
+            </span>
+            <span className="font-semibold tracking-tight">Tittawin</span>
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl">{title}</CardTitle>
+              <CardDescription>{subtitle}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="flex flex-col gap-5" onSubmit={onSubmit} noValidate>
+                <div className="flex flex-col gap-4">
+                  <Field data-invalid={errors.email ? true : undefined}>
+                    <FieldLabel htmlFor="email">Email</FieldLabel>
+                    <Input
+                      id="email"
+                      type="email"
+                      autoComplete="email"
+                      autoFocus
+                      placeholder="you@company.com"
+                      aria-invalid={!!errors.email}
+                      {...register('email')}
+                    />
+                    <FieldError>{errors.email?.message}</FieldError>
+                  </Field>
 
-            {formError ? (
-              <Alert variant="destructive">
-                <AlertCircleIcon />
-                <AlertTitle>{formError}</AlertTitle>
-              </Alert>
+                  <Field data-invalid={errors.password ? true : undefined}>
+                    <FieldLabel htmlFor="password">Password</FieldLabel>
+                    <Input
+                      id="password"
+                      type="password"
+                      autoComplete="current-password"
+                      aria-invalid={!!errors.password}
+                      {...register('password')}
+                    />
+                    <FieldError>{errors.password?.message}</FieldError>
+                  </Field>
+                </div>
+
+                {formError ? (
+                  <Alert variant="error">
+                    <AlertCircleIcon />
+                    <AlertTitle>{formError}</AlertTitle>
+                  </Alert>
+                ) : null}
+
+                <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Spinner />
+                      Signing in…
+                    </>
+                  ) : (
+                    'Sign in'
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+            {alternateLoginPath && alternateLabel ? (
+              <CardFooter className="justify-center">
+                <Link
+                  to={alternateLoginPath}
+                  className={buttonVariants({ variant: 'link' })}
+                >
+                  {alternateLabel}
+                </Link>
+              </CardFooter>
             ) : null}
-
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Spinner data-icon="inline-start" />
-                  Signing in…
-                </>
-              ) : (
-                'Sign in'
-              )}
-            </Button>
-          </form>
-        </CardContent>
-        {alternateLoginPath && alternateLabel ? (
-          <CardFooter>
-            <Link
-              to={alternateLoginPath}
-              className={buttonVariants({ variant: 'link' })}
-            >
-              {alternateLabel}
-            </Link>
-          </CardFooter>
-        ) : null}
-      </Card>
+          </Card>
+        </div>
+      </main>
     </div>
   );
 }

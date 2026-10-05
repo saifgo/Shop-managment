@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\Production;
 
 use App\Application\Audit\AuditRecorder;
+use App\Application\Catalog\RecipeService;
 use App\Application\Inventory\AvailabilityService;
 use App\Application\Inventory\BackorderAllocationService;
 use App\Application\Inventory\StockLedgerService;
@@ -21,6 +22,7 @@ use App\Infrastructure\Persistence\Entity\Catalog\ProductVariant;
 use App\Infrastructure\Persistence\Entity\Identity\User;
 use App\Infrastructure\Persistence\Entity\Production\ProductionItem;
 use App\Infrastructure\Persistence\Entity\Production\ProductionLoss;
+use App\Infrastructure\Persistence\Entity\Production\ProductionMaterial;
 use App\Infrastructure\Persistence\Entity\Production\ProductionOrder;
 use App\Infrastructure\Persistence\Entity\Production\StageExecution;
 use App\Infrastructure\Persistence\Entity\Production\StageExecutionLine;
@@ -56,6 +58,7 @@ final class ProductionService
         private ProductionConfigService $configService,
         private AuditRecorder $auditRecorder,
         private UnitOfWork $unitOfWork,
+        private RecipeService $recipeService,
     ) {
     }
 
@@ -148,12 +151,14 @@ final class ProductionService
 
             $this->stateMachine->assertTransition($order->getStatus(), ProductionStatus::InProgress);
             $this->ensureStageExecutions($order);
+            $consumed = $this->consumeMaterials($user, $order);
             $order->transitionTo(ProductionStatus::InProgress);
             $this->audit($user, $order, 'production.started', [
                 'stages' => array_map(
                     static fn (StageExecution $execution): string => $execution->getProductionStage()->getName(),
                     $order->getStageExecutions()->toArray(),
                 ),
+                'materials_consumed' => $consumed,
             ]);
 
             return $this->serialize($order);
@@ -183,10 +188,12 @@ final class ProductionService
             }
 
             $reason = $reason !== null && trim($reason) !== '' ? trim($reason) : null;
+            $materials = $this->settleMaterialsOnCancel($user, $order);
 
             return $this->doTransition($user, $order, ProductionStatus::Cancelled, 'production.cancelled', [
                 'reason' => $reason,
                 'in_process' => $this->inProcessSnapshot($order),
+                'materials' => $materials,
             ]);
         });
     }
@@ -352,6 +359,38 @@ final class ProductionService
             if ($order->allStagesCompleted()) {
                 $this->completeProduction($order, $user);
             }
+
+            return $this->serialize($order);
+        });
+    }
+
+    /**
+     * Sets the labour / kiln energy / other cost of the order (not drawn from stock). It is shared
+     * across the products by planned quantity and becomes part of each finished piece's cost when the
+     * order completes, so it can be changed until then.
+     *
+     * @return array<string, mixed>
+     */
+    public function updateCosts(User $user, string $productionId, string $additionalCost): array
+    {
+        return $this->unitOfWork->transactional(function () use ($user, $productionId, $additionalCost): array {
+            $order = $this->findProduction($user, $productionId, lock: true);
+
+            if (in_array($order->getStatus(), [ProductionStatus::Completed, ProductionStatus::Cancelled], true)) {
+                throw new BadRequestHttpException('The cost of a finished production can no longer be changed.');
+            }
+
+            $additionalCost = trim($additionalCost);
+            if (!preg_match('/^\d+(\.\d{1,4})?$/', $additionalCost)) {
+                throw new BadRequestHttpException('Additional cost must be a number of 0 or more with up to 4 decimals.');
+            }
+
+            $previous = $order->getAdditionalCost();
+            $order->setAdditionalCost(bcadd($additionalCost, '0', 4));
+            $this->audit($user, $order, 'production.costs.updated', [
+                'from' => $previous,
+                'to' => $order->getAdditionalCost(),
+            ]);
 
             return $this->serialize($order);
         });
@@ -693,11 +732,14 @@ final class ProductionService
                 'sku' => $item->getVariant()->getSku(),
                 'planned_quantity' => $item->getPlannedQuantity()->amount(),
                 'accepted_output_quantity' => $accepted->amount(),
+                'unit_cost' => $accepted->isZero() ? null : $this->finishedUnitCost($order, $item, $accepted),
             ];
 
             if ($accepted->isZero()) {
                 continue;
             }
+
+            $unitCost = $this->finishedUnitCost($order, $item, $accepted);
 
             $this->stockLedgerService->postMovement(
                 companyId: $order->companyId(),
@@ -711,6 +753,7 @@ final class ProductionService
                 reference: $order->getReference(),
                 notes: 'Production completed',
                 createdBy: EntityId::fromString($user->getId()),
+                unitCost: $unitCost,
             );
 
             $this->backorderAllocationService->allocateToBackorders(
@@ -726,6 +769,193 @@ final class ProductionService
             'location' => $location->getCode(),
             'receipts' => $receipts,
         ]);
+    }
+
+    /**
+     * Draws the recipe materials for every product from stock, all or nothing: a shortage names
+     * every missing material and the order stays unstarted.
+     *
+     * @return list<array{sku: string, quantity: string}>
+     */
+    private function consumeMaterials(User $user, ProductionOrder $order): array
+    {
+        if ($order->getMaterialsConsumedAt() !== null) {
+            return [];
+        }
+
+        $needs = [];
+        $totals = [];
+
+        foreach ($order->getItems() as $item) {
+            foreach ($this->recipeService->requirementsFor($item->getVariant(), $item->getPlannedQuantity()) as $requirement) {
+                $component = $requirement['component'];
+                $needs[] = ['item' => $item, 'component' => $component, 'quantity' => $requirement['quantity']];
+                $totals[$component->getId()] = [
+                    'component' => $component,
+                    'quantity' => isset($totals[$component->getId()]) ? $totals[$component->getId()]['quantity']->add($requirement['quantity']) : $requirement['quantity'],
+                ];
+            }
+        }
+
+        if ($needs === []) {
+            return [];
+        }
+
+        $location = $this->availabilityService->requireDefaultLocation($order->companyId());
+        $shortages = [];
+
+        foreach ($totals as $total) {
+            $onHand = Quantity::of($this->availabilityService->forVariant($order->companyId(), $total['component'], $location)['physical_on_hand']);
+
+            if ($total['quantity']->isGreaterThan($onHand)) {
+                $shortages[] = sprintf(
+                    '%s: need %s %s, have %s',
+                    $total['component']->getProduct()->getName(),
+                    $total['quantity']->amount(),
+                    $total['component']->getProduct()->getUnit(),
+                    $onHand->amount(),
+                );
+            }
+        }
+
+        if ($shortages !== []) {
+            throw new BadRequestHttpException('Not enough raw material to start this production. '.implode('; ', $shortages).'.');
+        }
+
+        $costs = [];
+        $consumed = [];
+
+        foreach ($needs as $need) {
+            $movement = $this->stockLedgerService->postMovement(
+                companyId: $order->companyId(),
+                variant: $need['component'],
+                location: $location,
+                movementType: StockMovementType::ProductionConsumption,
+                quantityDelta: '-'.$need['quantity']->amount(),
+                reservedDelta: '0.0000',
+                sourceType: 'production_order',
+                sourceId: EntityId::fromString($order->getId()),
+                reference: $order->getReference(),
+                notes: sprintf('Materials for %s', $need['item']->getVariant()->getSku()),
+                createdBy: EntityId::fromString($user->getId()),
+            );
+
+            $material = new ProductionMaterial(
+                EntityId::generate(),
+                $order,
+                $need['item'],
+                $need['component'],
+                $need['quantity'],
+                $movement->getUnitCost() ?? '0.0000',
+            );
+            $this->entityManager->persist($material);
+
+            $itemId = $need['item']->getId();
+            $costs[$itemId] = bcadd($costs[$itemId] ?? '0.0000', $material->getCost(), 4);
+            $consumed[] = ['sku' => $need['component']->getSku(), 'quantity' => $need['quantity']->amount()];
+        }
+
+        foreach ($order->getItems() as $item) {
+            $item->setMaterialCost($costs[$item->getId()] ?? '0.0000');
+        }
+
+        $order->markMaterialsConsumed();
+        // The order is serialized before the transaction commits, so its materials must be readable by then.
+        $this->entityManager->flush();
+
+        return $consumed;
+    }
+
+    /**
+     * Cancelling before any stage has begun hands the materials back; once work has started, clay
+     * and glaze cannot be un-used, so their cost is written off and reported in the audit trail.
+     *
+     * @return array{returned: bool, written_off_cost: string}|null
+     */
+    private function settleMaterialsOnCancel(User $user, ProductionOrder $order): ?array
+    {
+        if ($order->getMaterialsConsumedAt() === null) {
+            return null;
+        }
+
+        $workStarted = false;
+        foreach ($order->getStageExecutions() as $execution) {
+            if ($execution->getStatus() !== StageExecutionStatus::Pending) {
+                $workStarted = true;
+                break;
+            }
+        }
+
+        $materials = $this->materialsOf($order);
+        $cost = '0.0000';
+        foreach ($materials as $material) {
+            $cost = bcadd($cost, $material->getCost(), 4);
+        }
+
+        if ($workStarted) {
+            return ['returned' => false, 'written_off_cost' => $cost];
+        }
+
+        $location = $this->availabilityService->requireDefaultLocation($order->companyId());
+
+        foreach ($materials as $material) {
+            $this->stockLedgerService->postMovement(
+                companyId: $order->companyId(),
+                variant: $material->getVariant(),
+                location: $location,
+                movementType: StockMovementType::ProductionConsumption,
+                quantityDelta: $material->getQuantity()->amount(),
+                reservedDelta: '0.0000',
+                sourceType: 'production_order_cancel',
+                sourceId: EntityId::fromString($order->getId()),
+                reference: $order->getReference(),
+                notes: 'Materials returned: production cancelled before work started',
+                createdBy: EntityId::fromString($user->getId()),
+                unitCost: $material->getUnitCost(),
+            );
+            $this->entityManager->remove($material);
+        }
+
+        foreach ($order->getItems() as $item) {
+            $item->setMaterialCost('0.0000');
+        }
+        $order->markMaterialsReturned();
+
+        return ['returned' => true, 'written_off_cost' => '0.0000'];
+    }
+
+    /** @return list<ProductionMaterial> */
+    private function materialsOf(ProductionOrder $order): array
+    {
+        /** @var list<ProductionMaterial> $materials */
+        $materials = $this->entityManager->getRepository(ProductionMaterial::class)->findBy(['productionOrder' => $order]);
+
+        return $materials;
+    }
+
+    /**
+     * Cost of one finished piece: the item's materials plus its share (by planned quantity) of the
+     * order's additional cost, spread over the pieces that survived. Losses therefore make the
+     * pieces that did make it more expensive, which is the real cost of a firing that went wrong.
+     * Null while nothing is known about costs (no recipe, no additional cost).
+     */
+    private function finishedUnitCost(ProductionOrder $order, ProductionItem $item, Quantity $accepted): ?string
+    {
+        $plannedTotal = Quantity::zero();
+        foreach ($order->getItems() as $other) {
+            $plannedTotal = $plannedTotal->add($other->getPlannedQuantity());
+        }
+
+        $share = $plannedTotal->isZero()
+            ? '0.0000'
+            : bcdiv(bcmul($order->getAdditionalCost(), $item->getPlannedQuantity()->amount(), 6), $plannedTotal->amount(), 6);
+        $total = bcadd($item->getMaterialCost(), $share, 6);
+
+        if (bccomp($total, '0', 6) <= 0 || $accepted->isZero()) {
+            return null;
+        }
+
+        return bcadd(bcdiv($total, $accepted->amount(), 6), '0.00005', 4);
     }
 
     private function ensureStageExecutions(ProductionOrder $order): void
@@ -1034,6 +1264,67 @@ final class ProductionService
         ];
     }
 
+    /**
+     * Raw materials of the order: what has been drawn from stock, or, before the order starts,
+     * what it will need against what is on hand.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function serializeMaterials(ProductionOrder $order): array
+    {
+        $rows = [];
+
+        if ($order->getMaterialsConsumedAt() !== null) {
+            foreach ($this->materialsOf($order) as $material) {
+                $variant = $material->getVariant();
+                $key = $variant->getId();
+                $rows[$key] ??= [
+                    'variant_id' => $key,
+                    'sku' => $variant->getSku(),
+                    'name' => $variant->getProduct()->getName(),
+                    'unit' => $variant->getProduct()->getUnit(),
+                    'quantity' => '0.0000',
+                    'cost' => '0.0000',
+                    'consumed' => true,
+                ];
+                $rows[$key]['quantity'] = bcadd($rows[$key]['quantity'], $material->getQuantity()->amount(), 4);
+                $rows[$key]['cost'] = bcadd($rows[$key]['cost'], $material->getCost(), 4);
+            }
+
+            return array_values($rows);
+        }
+
+        if (!in_array($order->getStatus(), [ProductionStatus::Draft, ProductionStatus::Planned], true)) {
+            return [];
+        }
+
+        $location = $this->availabilityService->resolveDefaultLocation($order->companyId());
+
+        foreach ($order->getItems() as $item) {
+            foreach ($this->recipeService->requirementsFor($item->getVariant(), $item->getPlannedQuantity()) as $requirement) {
+                $variant = $requirement['component'];
+                $key = $variant->getId();
+                $rows[$key] ??= [
+                    'variant_id' => $key,
+                    'sku' => $variant->getSku(),
+                    'name' => $variant->getProduct()->getName(),
+                    'unit' => $variant->getProduct()->getUnit(),
+                    'quantity' => '0.0000',
+                    'cost' => null,
+                    'consumed' => false,
+                    'on_hand' => $this->availabilityService->forVariant($order->companyId(), $variant, $location)['physical_on_hand'],
+                ];
+                $rows[$key]['quantity'] = bcadd($rows[$key]['quantity'], $requirement['quantity']->amount(), 4);
+            }
+        }
+
+        foreach ($rows as $key => $row) {
+            $rows[$key]['is_short'] = bccomp($row['quantity'], (string) $row['on_hand'], 4) > 0;
+        }
+
+        return array_values($rows);
+    }
+
     /** @var array<string, string|null> */
     private array $userNames = [];
 
@@ -1079,7 +1370,16 @@ final class ProductionService
                 'in_process_quantity' => $active ? $order->currentQuantityFor($item)->amount() : '0.0000',
                 'loss_quantity' => $lost->amount(),
                 'accepted_output_quantity' => $item->getAcceptedOutputQuantity()->amount(),
+                'material_cost' => $item->getMaterialCost(),
+                'unit_cost' => $status === ProductionStatus::Completed && !$item->getAcceptedOutputQuantity()->isZero()
+                    ? $this->finishedUnitCost($order, $item, $item->getAcceptedOutputQuantity())
+                    : null,
             ];
+        }
+
+        $materialCost = '0.0000';
+        foreach ($order->getItems() as $item) {
+            $materialCost = bcadd($materialCost, $item->getMaterialCost(), 4);
         }
 
         return [
@@ -1092,6 +1392,10 @@ final class ProductionService
             'completed_at' => $order->getCompletedAt()?->format(DATE_ATOM),
             'cancelled_at' => $order->getCancelledAt()?->format(DATE_ATOM),
             'items' => $items,
+            'material_cost' => $materialCost,
+            'additional_cost' => $order->getAdditionalCost(),
+            'total_cost' => bcadd($materialCost, $order->getAdditionalCost(), 4),
+            'materials' => $this->serializeMaterials($order),
             'stages' => array_map($this->serializeStageExecution(...), $order->getStageExecutions()->toArray()),
             'can_plan' => $status === ProductionStatus::Draft,
             'can_start' => in_array($status, [ProductionStatus::Draft, ProductionStatus::Planned], true),

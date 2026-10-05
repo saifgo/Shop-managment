@@ -75,6 +75,19 @@ export interface ProductionStage {
   lines: ProductionStageLine[]
 }
 
+export interface ProductionMaterial {
+  variant_id: string
+  sku: string
+  name: string
+  unit: string
+  quantity: string
+  /** Null until the materials have been drawn. */
+  cost: string | null
+  consumed: boolean
+  on_hand?: string
+  is_short?: boolean
+}
+
 export interface ProductionDetail extends ProductionSummary {
   source_type?: string | null
   source_id?: string | null
@@ -94,7 +107,17 @@ export interface ProductionDetail extends ProductionSummary {
     in_process_quantity: string
     loss_quantity: string
     accepted_output_quantity: string
+    /** Cost of the raw materials drawn for this product. */
+    material_cost: string
+    /** Cost of one finished piece, known once the order has completed. */
+    unit_cost: string | null
   }>
+  /** Raw materials drawn from stock, or (before the order starts) what it will need. */
+  materials: ProductionMaterial[]
+  material_cost: string
+  /** Labour, kiln energy and other costs not drawn from stock. */
+  additional_cost: string
+  total_cost: string
   stages: ProductionStage[]
   can_plan: boolean
   can_start: boolean
@@ -196,6 +219,11 @@ export const productionApi = {
 
   cancel(id: string, reason?: string) {
     return apiClient.post<ProductionDetail>(`/api/productions/${id}/cancel`, { reason }, token())
+  },
+
+  /** Labour / kiln energy cost, spread over the finished pieces when the order completes. */
+  updateCosts(id: string, additionalCost: string) {
+    return apiClient.patch<ProductionDetail>(`/api/productions/${id}/costs`, { additional_cost: additionalCost }, token())
   },
 
   /** Inputs default to the planned quantity / previous stage's accepted output per product. */

@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
@@ -170,7 +170,7 @@ export function AdminDocumentCreatePage() {
       <PageHeader title="New document" description="Enter lines by hand or pick products from the catalog." />
 
       {save.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to save the document</AlertTitle>
           <AlertDescription>{save.error.message}</AlertDescription>
@@ -182,7 +182,7 @@ export function AdminDocumentCreatePage() {
           <CardTitle>Details</CardTitle>
         </CardHeader>
         <CardContent>
-          <FieldGroup className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             <Field>
               <FieldLabel htmlFor="document-type">Document type</FieldLabel>
               <NativeSelect
@@ -219,7 +219,7 @@ export function AdminDocumentCreatePage() {
                 <FieldDescription>Applied when the invoice is issued. Defaults to 30 days.</FieldDescription>
               </Field>
             ) : null}
-          </FieldGroup>
+          </div>
         </CardContent>
       </Card>
 

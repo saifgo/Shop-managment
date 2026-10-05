@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -87,7 +87,7 @@ export function AdminOrderCreatePage() {
       <PageHeader title="New order" description="Create an order on behalf of a customer." />
 
       {createOrder.isError ? (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertCircleIcon />
           <AlertTitle>Unable to create the order</AlertTitle>
           <AlertDescription>{createOrder.error.message}</AlertDescription>
@@ -117,7 +117,7 @@ export function AdminOrderCreatePage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2">
               <CardTitle>Items</CardTitle>
-              <VariantPicker onSelect={addLine} />
+              <VariantPicker kind="finished_good" onSelect={addLine} />
             </CardHeader>
             <CardContent>
               {lines.length === 0 ? (
@@ -147,7 +147,7 @@ export function AdminOrderCreatePage() {
                                 <span>{line.label}</span>
                                 <span className="text-xs text-muted-foreground">{line.sku}</span>
                                 {priced?.blocked ? (
-                                  <Badge variant="destructive">Not enough stock</Badge>
+                                  <Badge variant="error">Not enough stock</Badge>
                                 ) : priced?.will_backorder ? (
                                   <Badge variant="outline">Will be backordered</Badge>
                                 ) : null}
@@ -216,9 +216,9 @@ export function AdminOrderCreatePage() {
             <CardTitle>Summary</CardTitle>
           </CardHeader>
           <CardContent>
-            <FieldGroup>
+            <div className="flex flex-col gap-4">
               {pricing.error ? (
-                <Alert variant="destructive">
+                <Alert variant="error">
                   <AlertCircleIcon />
                   <AlertDescription>{pricing.error.message}</AlertDescription>
                 </Alert>
@@ -233,11 +233,11 @@ export function AdminOrderCreatePage() {
                   Some items are out of stock and cannot be backordered. Reduce the quantity or remove them.
                 </p>
               ) : null}
-              <Field orientation="horizontal">
+              <Field className="flex-row items-center">
                 <Checkbox id="order-confirm" checked={confirmNow} onCheckedChange={(checked) => setConfirmNow(checked)} />
                 <FieldLabel htmlFor="order-confirm">Confirm and reserve stock now</FieldLabel>
               </Field>
-            </FieldGroup>
+            </div>
           </CardContent>
           <CardFooter>
             <Button className="w-full" disabled={!canSubmit} onClick={() => createOrder.mutate()}>

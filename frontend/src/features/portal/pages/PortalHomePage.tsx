@@ -45,7 +45,7 @@ export function PortalHomePage() {
               View cart ({formatQuantity(itemCount)})
             </Link>
           ) : null}
-          <Button size="lg" nativeButton={false} render={<Link to="/portal/catalog" />}>
+          <Button size="lg" render={<Link to="/portal/catalog" />}>
             Shop now
             <ArrowRightIcon data-icon="inline-end" />
           </Button>

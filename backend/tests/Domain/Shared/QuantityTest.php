@@ -31,6 +31,15 @@ final class QuantityTest extends TestCase
         Quantity::of('-1', 'kg');
     }
 
+    public function testTimesScalesAndRoundsHalfUp(): void
+    {
+        self::assertSame('15.0000', Quantity::of('1.5')->times(Quantity::of('10'))->amount());
+        // 0.3333 x 3 = 0.9999; 0.00005 rounds up.
+        self::assertSame('0.9999', Quantity::of('0.3333')->times(Quantity::of('3'))->amount());
+        self::assertSame('0.0001', Quantity::of('0.0001')->times(Quantity::of('0.5'))->amount());
+        self::assertTrue(Quantity::of('0')->times(Quantity::of('7'))->isZero());
+    }
+
     public function testZeroQuantity(): void
     {
         $this->assertTrue(Quantity::zero('unit')->isZero());

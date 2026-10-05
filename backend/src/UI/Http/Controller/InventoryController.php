@@ -37,6 +37,7 @@ final class InventoryController extends AbstractController
             perPage: min(100, max(1, (int) $request->query->get('per_page', 20))),
             variantId: $request->query->get('variant_id'),
             locationId: $request->query->get('location_id'),
+            kind: $request->query->get('kind'),
         );
 
         return $this->json($result->toArray());
@@ -92,6 +93,7 @@ final class InventoryController extends AbstractController
             locationId: $payload->locationId,
             quantityDelta: $payload->quantityDelta,
             reason: $payload->reason,
+            unitCost: $payload->unitCost,
         );
 
         return $this->json($result, JsonResponse::HTTP_CREATED);
@@ -113,6 +115,10 @@ final readonly class CreateAdjustmentRequest
         /** Defaults to the company's default stock location when omitted. */
         #[SerializedName('location_id')]
         public ?string $locationId = null,
+        /** What one added unit cost. Used for opening stock and found stock; ignored when removing stock. */
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a cost such as 12 or 12.50.')]
+        #[SerializedName('unit_cost')]
+        public ?string $unitCost = null,
     ) {
     }
 }

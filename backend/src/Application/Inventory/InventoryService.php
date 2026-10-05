@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Application\Inventory;
 
 use App\Application\Audit\AuditRecorder;
+use App\Application\Catalog\ProductService;
 use App\Application\Shared\PaginatedResult;
 use App\Domain\Inventory\StockMovementType;
 use App\Domain\Shared\EntityId;
@@ -34,7 +35,7 @@ final class InventoryService
     /**
      * @return PaginatedResult<array<string, mixed>>
      */
-    public function listStock(User $user, int $page, int $perPage, ?string $variantId = null, ?string $locationId = null): PaginatedResult
+    public function listStock(User $user, int $page, int $perPage, ?string $variantId = null, ?string $locationId = null, ?string $kind = null): PaginatedResult
     {
         $qb = $this->entityManager->createQueryBuilder()
             ->select('b', 'v', 'p', 'l')
@@ -53,6 +54,10 @@ final class InventoryService
 
         if ($locationId !== null) {
             $qb->andWhere('l.id = :locationId')->setParameter('locationId', $locationId);
+        }
+
+        if ($kind !== null && $kind !== '') {
+            $qb->andWhere('p.kind = :kind')->setParameter('kind', $kind);
         }
 
         $qb->setFirstResult(max(0, ($page - 1) * $perPage))->setMaxResults($perPage);
@@ -75,6 +80,12 @@ final class InventoryService
                     'location_id' => $balance->getLocation()->getId(),
                     'location_code' => $balance->getLocation()->getCode(),
                     'location_name' => $balance->getLocation()->getName(),
+                    'kind' => $balance->getVariant()->getProduct()->getKind()->value,
+                    'unit' => $balance->getVariant()->getProduct()->getUnit(),
+                    'reorder_level' => $balance->getVariant()->getReorderLevel(),
+                    'average_cost' => $balance->getAverageCost(),
+                    'stock_value' => $balance->getValue(),
+                    'is_low_stock' => $balance->getVariant()->isLowStock($availability['available_to_sell'], ProductService::LOW_STOCK_THRESHOLD),
                     ...$availability,
                 ];
             }
@@ -155,8 +166,9 @@ final class InventoryService
         ?string $locationId,
         string $quantityDelta,
         string $reason,
+        ?string $unitCost = null,
     ): array {
-        return $this->unitOfWork->transactional(function () use ($user, $variantId, $locationId, $quantityDelta, $reason): array {
+        return $this->unitOfWork->transactional(function () use ($user, $variantId, $locationId, $quantityDelta, $reason, $unitCost): array {
             $variant = $this->findVariant($user, $variantId);
             $location = $locationId !== null && $locationId !== ''
                 ? $this->findLocation($user, $locationId)
@@ -189,6 +201,7 @@ final class InventoryService
                     reference: null,
                     notes: $reason,
                     createdBy: EntityId::fromString($user->getId()),
+                    unitCost: $unitCost !== null && trim($unitCost) !== '' ? Quantity::of(trim($unitCost))->amount() : null,
                 );
             } catch (\DomainException $exception) {
                 // e.g. removing more than is on hand, or dropping below what is reserved for orders.
@@ -239,6 +252,7 @@ final class InventoryService
             'sku' => $movement->getVariant()->getSku(),
             'location_id' => $movement->getLocation()->getId(),
             'movement_type' => $movement->getMovementType()->value,
+            'unit_cost' => $movement->getUnitCost(),
             'quantity_delta' => $movement->getQuantityDelta(),
             'reserved_delta' => $movement->getReservedDelta(),
             'source_type' => $movement->getSourceType(),

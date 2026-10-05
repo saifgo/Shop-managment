@@ -36,6 +36,10 @@ class StockBalance implements CompanyScoped
     #[ORM\Column(type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
     private string $reserved = '0.0000';
 
+    /** Moving-average cost of one unit on hand, in the company currency. */
+    #[ORM\Column(name: 'average_cost', type: 'decimal', precision: 19, scale: 4, options: ['default' => '0.0000'])]
+    private string $averageCost = '0.0000';
+
     #[ORM\Column(name: 'updated_at')]
     private \DateTimeImmutable $updatedAt;
 
@@ -93,7 +97,25 @@ class StockBalance implements CompanyScoped
         return Quantity::of($available);
     }
 
-    public function applyMovement(string $quantityDelta, string $reservedDelta): void
+    public function getAverageCost(): string
+    {
+        return bcadd($this->averageCost, '0', 4);
+    }
+
+    /** Value of the stock on hand at the current average cost. */
+    public function getValue(): string
+    {
+        return bcmul($this->physicalOnHand, $this->getAverageCost(), 4);
+    }
+
+    /**
+     * Applies a movement and returns the unit cost it is valued at.
+     *
+     * Receipts carrying a unit cost blend into the moving average; receipts without one (found
+     * stock, sellable returns) come in at the current average; issues always leave at the average,
+     * so cost of goods sold and stock valuation stay consistent.
+     */
+    public function applyMovement(string $quantityDelta, string $reservedDelta, ?string $unitCost = null): string
     {
         $newPhysical = bcadd($this->physicalOnHand, $quantityDelta, 4);
         $newReserved = bcadd($this->reserved, $reservedDelta, 4);
@@ -110,8 +132,19 @@ class StockBalance implements CompanyScoped
             throw new \DomainException('Reserved quantity cannot exceed physical on hand.');
         }
 
+        $movementCost = $this->getAverageCost();
+
+        if ($unitCost !== null && bccomp($quantityDelta, '0', 4) > 0) {
+            $movementCost = bcadd($unitCost, '0', 4);
+            $totalValue = bcadd(bcmul($this->physicalOnHand, $this->averageCost, 6), bcmul($quantityDelta, $unitCost, 6), 6);
+            // Round half up: bcdiv truncates.
+            $this->averageCost = bcadd(bcdiv($totalValue, $newPhysical, 6), '0.00005', 4);
+        }
+
         $this->physicalOnHand = $newPhysical;
         $this->reserved = $newReserved;
         $this->updatedAt = new \DateTimeImmutable();
+
+        return $movementCost;
     }
 }

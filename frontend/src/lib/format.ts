@@ -3,11 +3,17 @@
  * amounts as fixed-scale decimal strings ("4.0000"); people want to read "4".
  */
 
-export function formatQuantity(value: string | number | null | undefined): string {
+export function formatQuantity(value: string | number | null | undefined, maxDecimals = 2): string {
   if (value === null || value === undefined || value === '') return '—'
   const number = typeof value === 'number' ? value : Number(value)
   if (Number.isNaN(number)) return String(value)
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(number)
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: maxDecimals }).format(number)
+}
+
+/** "12.5 kg", "3 pc": a quantity with the unit it is counted in. */
+export function formatWithUnit(value: string | number | null | undefined, unit: string | null | undefined, maxDecimals = 2): string {
+  const quantity = formatQuantity(value, maxDecimals)
+  return quantity === '—' || !unit ? quantity : `${quantity} ${unit}`
 }
 
 export function formatDate(value: string | null | undefined): string {

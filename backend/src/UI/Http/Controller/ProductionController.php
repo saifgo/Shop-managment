@@ -17,6 +17,7 @@ use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\CurrentUser;
 use Symfony\Component\Serializer\Attribute\SerializedName;
+use Symfony\Component\Validator\Constraints as Assert;
 
 #[OA\Tag(name: 'Production')]
 final class ProductionController extends AbstractController
@@ -119,6 +120,15 @@ final class ProductionController extends AbstractController
         return $this->json($this->productionService->resume($user, $id));
     }
 
+    #[Route('/api/productions/{id}/costs', name: 'api_productions_costs', methods: ['PATCH'])]
+    #[OA\Patch(path: '/api/productions/{id}/costs', summary: 'Set the labour / kiln energy cost of a production order, shared across its finished pieces', security: [['Bearer' => []]])]
+    public function updateCosts(string $id, #[MapRequestPayload] UpdateProductionCostsRequest $payload, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PRODUCTION_MANAGE);
+
+        return $this->json($this->productionService->updateCosts($user, $id, $payload->additionalCost));
+    }
+
     #[Route('/api/productions/{id}/cancel', name: 'api_productions_cancel', methods: ['POST'])]
     public function cancel(string $id, #[MapRequestPayload] CancelProductionRequest $payload, #[CurrentUser] User $user): JsonResponse
     {
@@ -204,6 +214,17 @@ final readonly class CreateProductionRequest
         public ?string $sourceType = null,
         #[SerializedName('source_id')]
         public ?string $sourceId = null,
+    ) {
+    }
+}
+
+final readonly class UpdateProductionCostsRequest
+{
+    public function __construct(
+        #[Assert\NotBlank]
+        #[Assert\Regex(pattern: '/^\d+(\.\d{1,4})?$/', message: 'Enter a cost such as 40 or 40.50.')]
+        #[SerializedName('additional_cost')]
+        public string $additionalCost,
     ) {
     }
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -10,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
@@ -68,6 +68,7 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
   const [quantity, setQuantity] = useState('')
   const [reason, setReason] = useState<string>(REASONS[0])
   const [note, setNote] = useState('')
+  const [unitCost, setUnitCost] = useState('')
   const [showErrors, setShowErrors] = useState(false)
 
   const availability = useQuery({
@@ -86,6 +87,8 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
     return onHand === null ? null : units - toUnits(onHand)
   })()
   const resultingOnHand = onHand !== null && delta !== null ? toUnits(onHand) + delta : null
+  const unitCostValid = unitCost.trim() === '' || /^\d+([.,]\d{1,4})?$/.test(unitCost.trim())
+  const addsStock = delta !== null && delta > 0
   const noteRequired = reason === 'Other'
   const reasonText = note.trim() ? `${reason}: ${note.trim()}` : reason
 
@@ -101,6 +104,7 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
           ? `Only ${onHand} on hand — you can't remove more than that.`
           : null,
     note: noteRequired && !note.trim() ? 'Describe the reason.' : null,
+    unitCost: addsStock && !unitCostValid ? 'Enter a cost such as 12 or 12.50.' : null,
   }
   const hasErrors = Object.values(errors).some(Boolean) || delta === null
 
@@ -111,6 +115,7 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
         location_id: variant!.location_id,
         quantity_delta: fromUnits(delta!),
         reason: reasonText.slice(0, 255),
+        unit_cost: addsStock && unitCost.trim() ? unitCost.trim().replace(',', '.') : undefined,
       }),
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: ['admin', 'inventory'] })
@@ -133,9 +138,9 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
         submit()
       }}
     >
-      <FieldGroup>
+      <div className="flex flex-col gap-4">
         <Field data-invalid={showErrors && errors.variant ? true : undefined}>
-          <FieldTitle>Product</FieldTitle>
+          <span className="text-sm font-medium text-foreground">Product</span>
           {variant ? (
             <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
               <span className="flex min-w-0 flex-col">
@@ -168,10 +173,9 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
         </Field>
 
         <Field>
-          <FieldTitle id="adjust-mode-label">Adjustment</FieldTitle>
+          <span id="adjust-mode-label" className="text-sm font-medium text-foreground">Adjustment</span>
           <ToggleGroup
             variant="outline"
-            spacing={0}
             aria-labelledby="adjust-mode-label"
             value={[mode]}
             onValueChange={(next) => {
@@ -207,6 +211,28 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
           ) : null}
         </Field>
 
+        {addsStock ? (
+          <Field data-invalid={showErrors && errors.unitCost ? true : undefined}>
+            <FieldLabel htmlFor="adjust-unit-cost">Cost per unit (optional)</FieldLabel>
+            <Input
+              id="adjust-unit-cost"
+              inputMode="decimal"
+              placeholder="0.00"
+              className="tabular-nums sm:max-w-40"
+              value={unitCost}
+              aria-invalid={showErrors && errors.unitCost ? true : undefined}
+              onChange={(event) => setUnitCost(event.target.value)}
+            />
+            {showErrors && errors.unitCost ? (
+              <FieldError>{errors.unitCost}</FieldError>
+            ) : (
+              <FieldDescription>
+                For opening or found stock. It is blended into the average cost; leave empty to keep the current one.
+              </FieldDescription>
+            )}
+          </Field>
+        ) : null}
+
         <Field>
           <FieldLabel htmlFor="adjust-reason">Reason</FieldLabel>
           <NativeSelect
@@ -234,7 +260,7 @@ function StockAdjustmentForm({ target, onClose }: { target?: AdjustmentTarget | 
           />
           {showErrors && errors.note ? <FieldError>{errors.note}</FieldError> : null}
         </Field>
-      </FieldGroup>
+      </div>
 
       {adjust.error ? <FieldError>{adjust.error.message}</FieldError> : null}
 

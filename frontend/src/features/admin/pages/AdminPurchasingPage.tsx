@@ -72,7 +72,7 @@ export function AdminPurchasingPage() {
         title="Purchase Orders"
         action={
           <PermissionGate permission={PERMISSIONS.purchasingManage}>
-            <Button nativeButton={false} render={<Link to="/admin/purchasing/new" />}>
+            <Button render={<Link to="/admin/purchasing/new" />}>
               <PlusIcon data-icon="inline-start" />
               New purchase order
             </Button>

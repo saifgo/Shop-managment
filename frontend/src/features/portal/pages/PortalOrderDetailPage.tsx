@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { AlertCircleIcon, ArrowLeftIcon, RotateCcwIcon, Undo2Icon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { ConfirmAction } from '@/components/ConfirmAction'
 import { MoneyText } from '@/components/MoneyText'
 import { OrderProgress } from '@/components/OrderProgress'
@@ -260,7 +260,7 @@ function ReturnRequestDialog({ order }: { order: OrderDetail }) {
           </DialogHeader>
 
           {submit.isError ? (
-            <Alert variant="destructive">
+            <Alert variant="error">
               <AlertCircleIcon />
               <AlertDescription>{submit.error.message}</AlertDescription>
             </Alert>

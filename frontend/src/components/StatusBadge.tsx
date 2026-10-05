@@ -5,46 +5,46 @@ import { cn } from '@/lib/utils'
 type BadgeVariant = NonNullable<VariantProps<typeof badgeVariants>['variant']>
 
 const STATUS_VARIANT_MAP: Record<string, BadgeVariant> = {
-  // Neutral / waiting
-  DRAFT: 'secondary',
-  PENDING: 'secondary',
-  PLANNED: 'secondary',
+  // Waiting / needs attention
+  DRAFT: 'warning',
+  PENDING: 'warning',
+  PLANNED: 'warning',
   ISSUED: 'secondary',
-  REQUESTED: 'secondary',
+  REQUESTED: 'warning',
   OPEN: 'secondary',
 
   // Active / in flight
-  CONFIRMED: 'default',
-  IN_PROGRESS: 'default',
-  PAUSED: 'outline',
-  PACKED: 'default',
-  DISPATCHED: 'default',
-  IN_TRANSIT: 'default',
-  READY: 'default',
-  READY_TO_DELIVER: 'default',
-  PARTIALLY_PAID: 'default',
-  PARTIALLY_DELIVERED: 'default',
-  APPROVED: 'default',
-  SENT: 'default',
-  PARTIALLY_RECEIVED: 'default',
-  POSTED: 'outline',
+  CONFIRMED: 'info',
+  IN_PROGRESS: 'info',
+  PAUSED: 'warning',
+  PACKED: 'info',
+  DISPATCHED: 'info',
+  IN_TRANSIT: 'info',
+  READY: 'info',
+  READY_TO_DELIVER: 'info',
+  PARTIALLY_PAID: 'info',
+  PARTIALLY_DELIVERED: 'info',
+  APPROVED: 'info',
+  SENT: 'info',
+  PARTIALLY_RECEIVED: 'info',
+  POSTED: 'info',
 
   // Settled / complete
-  COMPLETED: 'outline',
-  DELIVERED: 'outline',
-  PAID: 'outline',
-  CLOSED: 'outline',
-  FULFILLED: 'outline',
-  RECEIVED: 'outline',
+  COMPLETED: 'success',
+  DELIVERED: 'success',
+  PAID: 'success',
+  CLOSED: 'success',
+  FULFILLED: 'success',
+  RECEIVED: 'success',
 
-  // Destructive
-  CANCELLED: 'destructive',
-  CANCELED: 'destructive',
-  REJECTED: 'destructive',
-  FAILED: 'destructive',
-  OVERDUE: 'destructive',
-  VOID: 'destructive',
-  RETURNED: 'destructive',
+  // Failed / reversed
+  CANCELLED: 'error',
+  CANCELED: 'error',
+  REJECTED: 'error',
+  FAILED: 'error',
+  OVERDUE: 'error',
+  VOID: 'error',
+  RETURNED: 'error',
 }
 
 function formatStatusLabel(status: string) {
@@ -65,7 +65,7 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
   const variant = STATUS_VARIANT_MAP[key] ?? 'outline'
 
   return (
-    <Badge variant={variant} className={cn(className)}>
+    <Badge variant={variant} size="lg" className={cn(className)}>
       {label ?? formatStatusLabel(status)}
     </Badge>
   )

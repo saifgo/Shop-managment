@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Trash2Icon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Spinner } from '@/components/ui/spinner'
@@ -126,11 +126,11 @@ function CreateProductionForm({
         if (canSubmit) create.mutate()
       }}
     >
-      <FieldGroup>
+      <div className="flex flex-col gap-4">
         <Field data-invalid={showErrors && lines.length === 0 ? true : undefined}>
           <div className="flex items-center justify-between gap-3">
-            <FieldTitle>Products</FieldTitle>
-            <VariantPicker triggerLabel="Add product" onSelect={addLine} />
+            <span className="text-sm font-medium text-foreground">Products</span>
+            <VariantPicker triggerLabel="Add product" kind="finished_good" onSelect={addLine} />
           </div>
 
           {lines.length === 0 ? (
@@ -207,14 +207,14 @@ function CreateProductionForm({
           <Textarea id="production-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
         </Field>
 
-        <Field orientation="horizontal">
+        <Field className="flex-row items-center">
           <Checkbox id="production-plan" checked={plan} onCheckedChange={(checked) => setPlan(checked === true)} />
           <div className="flex flex-col gap-1">
             <FieldLabel htmlFor="production-plan">Mark as planned</FieldLabel>
             <FieldDescription>Planned orders count toward “In production” in demand planning.</FieldDescription>
           </div>
         </Field>
-      </FieldGroup>
+      </div>
 
       {create.error ? <FieldError>{create.error.message}</FieldError> : null}
 

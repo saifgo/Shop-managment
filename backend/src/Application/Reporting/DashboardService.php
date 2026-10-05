@@ -6,6 +6,7 @@ namespace App\Application\Reporting;
 
 use App\Application\Catalog\ProductService;
 use App\Application\Finance\FinanceProjectionService;
+use App\Application\Production\ProductionYieldService;
 use App\Application\Payments\CustomerReceivablesService;
 use App\Domain\Documents\DocumentType;
 use App\Domain\Documents\InvoiceStatus;
@@ -34,6 +35,7 @@ final class DashboardService
         private EntityManagerInterface $entityManager,
         private FinanceProjectionService $financeProjectionService,
         private CustomerReceivablesService $receivablesService,
+        private ProductionYieldService $productionYieldService,
     ) {}
 
     /** @return array<string, mixed> */
@@ -201,7 +203,7 @@ final class DashboardService
 
         $low = array_values(array_filter(
             $balances,
-            static fn (StockBalance $b): bool => bccomp($b->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD, 4) < 0,
+            static fn (StockBalance $b): bool => $b->getVariant()->isLowStock($b->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD),
         ));
         usort($low, static fn (StockBalance $a, StockBalance $b): int => bccomp($a->getAvailableToSell()->amount(), $b->getAvailableToSell()->amount(), 4));
 
@@ -213,6 +215,9 @@ final class DashboardService
             'sku' => $b->getVariant()->getSku(),
             'available_to_sell' => $b->getAvailableToSell()->amount(),
             'physical_on_hand' => $b->getPhysicalOnHand()->amount(),
+            'kind' => $b->getVariant()->getProduct()->getKind()->value,
+            'unit' => $b->getVariant()->getProduct()->getUnit(),
+            'reorder_level' => $b->getVariant()->getReorderLevel(),
         ], array_slice($low, 0, 8));
     }
 
@@ -321,24 +326,7 @@ final class DashboardService
 
     private function productionYield(string $companyId): ?string
     {
-        $totals = $this->entityManager->createQueryBuilder()
-            ->select('COALESCE(SUM(se.inputQuantity), 0) AS input_total, COALESCE(SUM(se.acceptedOutputQuantity), 0) AS output_total')
-            ->from(StageExecution::class, 'se')
-            ->join('se.productionOrder', 'p')
-            ->where('p.companyId = :companyId')
-            ->andWhere('se.completedAt IS NOT NULL')
-            ->setParameter('companyId', $companyId)
-            ->getQuery()
-            ->getSingleResult();
-
-        $input = (string) ($totals['input_total'] ?? '0.0000');
-        $output = (string) ($totals['output_total'] ?? '0.0000');
-
-        if (bccomp($input, '0.0000', 4) <= 0) {
-            return null;
-        }
-
-        return bcmul(bcdiv($output, $input, 6), '100', 2);
+        return $this->productionYieldService->summary($companyId)['yield_pct'];
     }
 
     private function countLowStock(string $companyId): int
@@ -355,7 +343,7 @@ final class DashboardService
         $count = 0;
 
         foreach ($balances as $balance) {
-            if (bccomp($balance->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD, 4) < 0) {
+            if ($balance->getVariant()->isLowStock($balance->getAvailableToSell()->amount(), ProductService::LOW_STOCK_THRESHOLD)) {
                 ++$count;
             }
         }

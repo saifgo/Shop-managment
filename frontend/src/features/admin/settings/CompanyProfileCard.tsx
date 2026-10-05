@@ -1,12 +1,13 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImagePlusIcon, StampIcon, Trash2Icon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSeparator } from '@/components/ui/field'
+import { Field, FieldDescription, FieldError, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
+import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { COMPANY_PROFILE_QUERY_KEY, settingsApi, type CompanyProfile, type CompanyProfileInput } from '@/lib/api/settings'
 
@@ -70,7 +71,7 @@ export function CompanyProfileCard({ profile }: { profile: CompanyProfile }) {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <FieldGroup>
+          <div className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field className="sm:col-span-2">
                 <FieldLabel htmlFor="company-name">Business name</FieldLabel>
@@ -102,7 +103,7 @@ export function CompanyProfileCard({ profile }: { profile: CompanyProfile }) {
               </Field>
             </div>
 
-            <FieldSeparator />
+            <Separator />
 
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
@@ -138,10 +139,10 @@ export function CompanyProfileCard({ profile }: { profile: CompanyProfile }) {
               </Field>
             </div>
 
-            <FieldSeparator />
+            <Separator />
 
             <StampField profile={profile} onSaved={onSaved} />
-          </FieldGroup>
+          </div>
         </CardContent>
         <CardFooter className="justify-end">
           <Button type="submit" disabled={!dirty || !emailValid || !stampDutyValid || save.isPending}>

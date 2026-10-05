@@ -1,8 +1,8 @@
 <?php
 /**
  * Commercial document (invoice, quote, delivery note…) rendered to PDF by dompdf and
- * shown as-is in the share-link preview. Measurements are in points on an A4 page and
- * follow the company's paper invoice template.
+ * shown as-is in the share-link preview. Measurements are in points on an A4 page
+ * (595 x 842pt) with 40pt side margins, so the content column is 515pt wide.
  *
  * @var array{
  *     for_pdf: bool,
@@ -11,6 +11,7 @@
  *     title: string,
  *     number: string,
  *     date: string,
+ *     due_date: string|null,
  *     company: \App\Application\Settings\CompanyProfile,
  *     customer: array{name: string, address: string|null, tax_id: string|null},
  *     lines: list<array{description: string, quantity: string, unit_price: string, total: string}>,
@@ -23,6 +24,9 @@
 $e = static fn (?string $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $company = $view['company'];
 $customer = $view['customer'];
+$totals = $view['totals'];
+$grandTotal = array_pop($totals);
+$footerParts = array_filter([$company->name, $company->address, $company->phone, $company->email], static fn (?string $part): bool => $part !== null && $part !== '');
 ?><!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -33,105 +37,157 @@ $customer = $view['customer'];
     @font-face { font-family: 'Carlito'; font-weight: normal; font-style: normal; src: url('<?= $e($view['fonts']['regular']) ?>') format('truetype'); }
     @font-face { font-family: 'Carlito'; font-weight: bold; font-style: normal; src: url('<?= $e($view['fonts']['bold']) ?>') format('truetype'); }
 <?php endif; ?>
-    @page { margin-top: 22.5pt; margin-right: 0; margin-bottom: 30pt; margin-left: 0; }
-    /* dompdf applies the @page margins to <html>, so only <body> is reset. */
+    @page { margin: 34pt 40pt 54pt 40pt; }
     body {
         margin: 0;
         padding: 0;
         background: #fff;
         font-family: Carlito, Calibri, 'Segoe UI', Helvetica, Arial, sans-serif;
-        font-size: 11pt;
+        font-size: 10.5pt;
         line-height: <?= $e($view['line_height']) ?>;
-        color: #000;
+        color: #2B2622;
     }
     .sheet { position: relative; }
 <?php if (!$view['for_pdf']): ?>
     /* The browser preview has no @page box, so the sheet recreates the A4 page and its margins. */
-    body { overflow-x: hidden; }
-    .sheet { box-sizing: border-box; width: 595.3pt; min-height: 841.9pt; padding: 22.5pt 0 30pt 0; overflow: hidden; }
+    body { overflow-x: hidden; background: #fff; }
+    .sheet { box-sizing: border-box; width: 595.3pt; min-height: 841.9pt; padding: 34pt 40pt 54pt 40pt; overflow: hidden; }
+    .page-bar { position: absolute; top: 0; left: 0; }
+    .page-footer { position: absolute; bottom: 22pt; left: 40pt; }
+<?php else: ?>
+    /* Fixed elements repeat on every page and may use the page margins. */
+    .page-bar { position: fixed; top: -34pt; left: -40pt; }
+    .page-footer { position: fixed; bottom: -40pt; left: 0; }
 <?php endif; ?>
     .accent { background-color: #A97045; }
-    .top-bar { margin-left: 19.5pt; width: 552pt; height: 36.8pt; border-radius: 6pt; }
+    .muted { color: #7A6F67; }
+    .page-bar { width: 595.3pt; height: 9pt; background-color: #A97045; }
+    .page-footer { width: 515pt; padding-top: 7pt; border-top: 0.6pt solid #E3DAD2; text-align: center; font-size: 8.5pt; color: #7A6F67; }
 
-    .parties { width: 100%; margin-top: 29pt; border-collapse: collapse; }
+    table { border-collapse: collapse; }
+    .header { width: 100%; margin-top: 14pt; }
+    .header td { padding: 0; vertical-align: top; }
+    .seller p.seller-name { margin: 0 0 6pt 0; color: #2B2622; font-size: 19pt; font-weight: bold; }
+    .seller p { margin: 0 0 2pt 0; font-size: 9.5pt; color: #5E544C; }
+    .seller a { color: #5E544C; text-decoration: none; }
+    .doc { text-align: right; }
+    .doc-title { margin: 0; font-size: 23pt; font-weight: bold; color: #A97045; text-transform: uppercase; letter-spacing: 1.2pt; }
+    .doc-number { margin: 3pt 0 0 0; font-size: 12pt; font-weight: bold; }
+
+    .parties { width: 100%; margin-top: 26pt; }
     .parties td { padding: 0; vertical-align: top; }
-    .seller { width: 326pt; padding-left: 14pt !important; }
-    .seller p { margin: 0; }
-    .seller .seller-name { font-size: 14pt; font-weight: bold; margin-bottom: 20pt; }
-    .seller a { color: #0563C1; text-decoration: underline; }
-    .customer p { margin: 0 0 9pt 0; padding-right: 45pt; }
-    .customer .document-date { font-size: 12pt; margin: 0; }
-    .customer .document-title { font-size: 14pt; font-weight: bold; margin-bottom: 5pt; }
-    .customer .customer-name { font-size: 12pt; font-weight: bold; }
-    .strong { font-weight: bold; }
+    .party-card { padding: 11pt 14pt; background-color: #F8F4F0; border-left: 3pt solid #A97045; }
+    .party-card .eyebrow { margin: 0 0 4pt 0; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; color: #A97045; }
+    .party-card p { margin: 0 0 2pt 0; }
+    .party-card .name { font-size: 12.5pt; font-weight: bold; }
+    .gap { width: 16pt; }
+    .meta-card { padding: 11pt 14pt; border: 0.6pt solid #E3DAD2; }
+    .meta-card table { width: 100%; }
+    .meta-card td { padding: 2pt 0; font-size: 10pt; }
+    .meta-card td.k { color: #7A6F67; }
+    .meta-card td.v { text-align: right; font-weight: bold; }
 
-    table.lines { margin: 70pt 0 0 71.6pt; width: 452pt; border-collapse: collapse; }
-    table.lines th, table.lines td {
-        height: 17.5pt;
-        padding: 0 4pt;
-        border: 0.48pt solid #999;
-        text-align: center;
-        vertical-align: middle;
+    table.lines { width: 100%; margin-top: 24pt; }
+    table.lines th {
+        padding: 7pt 8pt;
+        background-color: #A97045;
+        color: #fff;
+        font-size: 8.5pt;
+        font-weight: bold;
+        letter-spacing: 0.6pt;
+        text-transform: uppercase;
+        text-align: right;
+        border: 0;
     }
-    table.lines th { color: #fff; font-weight: bold; border-bottom-color: #000; }
-    table.lines tr.shaded td { background-color: #E7E6E6; }
-    /* Column widths exclude the 8pt of horizontal cell padding: 187 + 63 + 85 + 117 = 452pt. */
-    .col-description { width: 179pt; }
-    .col-quantity { width: 55pt; }
-    .col-price { width: 77pt; }
-    .col-total { width: 109pt; }
+    table.lines thead tr { background-color: #A97045; }
+    table.lines td { padding: 8pt; border-bottom: 0.6pt solid #E9E1DA; text-align: right; vertical-align: top; }
+    table.lines tr.shaded td { background-color: #FBF8F5; }
+    table.lines tr { page-break-inside: avoid; }
+    table.lines thead { display: table-header-group; }
+    table.lines th.left, table.lines td.left { text-align: left; }
+    table.lines td.total { font-weight: bold; }
+    .col-description { width: 47%; }
+    .col-quantity { width: 11%; }
+    .col-price { width: 20%; }
+    .col-total { width: 22%; }
 
-    table.summary { margin: 56pt 0 0 71.6pt; width: 453.8pt; border-collapse: collapse; }
+    table.summary { width: 100%; margin-top: 18pt; page-break-inside: avoid; }
     table.summary > tbody > tr > td { padding: 0; vertical-align: top; }
-    .notes { width: 196pt; padding-right: 10pt !important; font-size: 10pt; white-space: pre-line; }
-    table.totals { width: 247.4pt; border-collapse: collapse; }
-    table.totals td { height: 21.5pt; padding: 1pt 6pt; border: 0.48pt solid #A5A5A5; vertical-align: top; }
-    table.totals td.label { width: 119.6pt; font-size: 10pt; font-weight: bold; }
-    table.totals td.value { font-size: 11pt; }
+    .notes { padding: 6pt 24pt 0 0 !important; font-size: 9.5pt; color: #5E544C; }
+    .notes .text { white-space: pre-line; }
+    .notes .eyebrow { margin: 0 0 3pt 0; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; color: #A97045; }
+    table.totals { width: 100%; }
+    table.totals td { padding: 6pt 8pt; border-bottom: 0.6pt solid #E9E1DA; }
+    table.totals td.label { color: #5E544C; }
+    table.totals tr.grand { background-color: #A97045; }
+    table.totals td.value { text-align: right; font-weight: bold; white-space: nowrap; }
+    table.totals tr.grand td { padding: 9pt 8pt; border: 0; background-color: #A97045; color: #fff; font-size: 12pt; font-weight: bold; }
+    .col-totals { width: 232pt; }
 
-    .stamp { height: 114pt; margin: 2pt 0 0 94.7pt; }
-
-    .bank { position: relative; height: 46pt; margin-left: 71.6pt; }
-    .bank-label { font-weight: bold; margin: 0 0 8pt 0; }
-    .bank-number { font-size: 12pt; font-weight: bold; margin: 0; }
-    .pill { position: absolute; top: 15.6pt; left: 394.7pt; width: 129pt; height: 24.8pt; border-radius: 12.4pt 0 0 12.4pt; }
+    table.closing { width: 100%; margin-top: 26pt; page-break-inside: avoid; }
+    table.closing td { padding: 0; vertical-align: bottom; }
+    .bank { padding: 10pt 14pt; border: 0.6pt solid #E3DAD2; }
+    .bank .eyebrow { margin: 0 0 3pt 0; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; color: #A97045; }
+    .bank .number { margin: 0; font-size: 12pt; font-weight: bold; letter-spacing: 0.4pt; }
+    .signature { text-align: right; }
+    .signature .eyebrow { margin: 0 0 4pt 0; font-size: 8pt; font-weight: bold; letter-spacing: 1pt; text-transform: uppercase; color: #A97045; }
 </style>
 </head>
 <body>
+<div class="page-bar"></div>
+<?php if ($footerParts !== []): ?>
+    <div class="page-footer"><?= $e(implode('  ·  ', $footerParts)) ?></div>
+<?php endif; ?>
 <div class="sheet">
-    <div class="top-bar accent"></div>
-
-    <table class="parties">
+    <table class="header">
         <tr>
             <td class="seller">
                 <p class="seller-name"><?= $e($company->name) ?></p>
                 <?php if ($company->address !== null): ?>
-                    <p>Adresse :</p>
                     <p><?= $e($company->address) ?></p>
                 <?php endif; ?>
                 <?php if ($company->phone !== null): ?>
-                    <p>Numéro de téléphone :</p>
-                    <p><?= $e($company->phone) ?></p>
+                    <p>Tél. : <?= $e($company->phone) ?></p>
                 <?php endif; ?>
                 <?php if ($company->email !== null): ?>
-                    <p>Email :</p>
                     <p><a href="mailto:<?= $e($company->email) ?>"><?= $e($company->email) ?></a></p>
                 <?php endif; ?>
                 <?php if ($company->taxId !== null): ?>
-                    <p>M.F :</p>
-                    <p class="strong"><?= $e($company->taxId) ?></p>
+                    <p>M.F : <strong><?= $e($company->taxId) ?></strong></p>
                 <?php endif; ?>
             </td>
-            <td class="customer">
-                <p class="document-date">Date <?= $e($view['date']) ?></p>
-                <p class="document-title"><?= $e($view['title']) ?> N° <?= $e($view['number']) ?></p>
-                <p class="customer-name"><?= $e($customer['name']) ?></p>
-                <?php if ($customer['address'] !== null): ?>
-                    <p>Adresse: <?= $e($customer['address']) ?></p>
-                <?php endif; ?>
-                <?php if ($customer['tax_id'] !== null): ?>
-                    <p>M. F: <?= $e($customer['tax_id']) ?></p>
-                <?php endif; ?>
+            <td class="doc">
+                <p class="doc-title"><?= $e($view['title']) ?></p>
+                <p class="doc-number">N° <?= $e($view['number']) ?></p>
+            </td>
+        </tr>
+    </table>
+
+    <table class="parties">
+        <tr>
+            <td>
+                <div class="party-card">
+                    <p class="eyebrow">Facturé à</p>
+                    <p class="name"><?= $e($customer['name']) ?></p>
+                    <?php if ($customer['address'] !== null): ?>
+                        <p><?= $e($customer['address']) ?></p>
+                    <?php endif; ?>
+                    <?php if ($customer['tax_id'] !== null): ?>
+                        <p class="muted">M.F : <?= $e($customer['tax_id']) ?></p>
+                    <?php endif; ?>
+                </div>
+            </td>
+            <td class="gap"></td>
+            <td style="width: 190pt;">
+                <div class="meta-card">
+                    <table>
+                        <tr><td class="k">Date</td><td class="v"><?= $e($view['date']) ?></td></tr>
+                        <?php if (($view['due_date'] ?? null) !== null): ?>
+                            <tr><td class="k">Échéance</td><td class="v"><?= $e($view['due_date']) ?></td></tr>
+                        <?php endif; ?>
+                        <tr><td class="k">Devise</td><td class="v"><?= $e($view['currency'] ?? 'TND') ?></td></tr>
+                    </table>
+                </div>
             </td>
         </tr>
     </table>
@@ -139,56 +195,72 @@ $customer = $view['customer'];
     <table class="lines">
         <thead>
             <tr>
-                <th class="accent col-description">Description</th>
-                <th class="accent col-quantity">Quantité</th>
-                <th class="accent col-price">Prix Unitaire</th>
-                <th class="accent col-total">Total</th>
+                <th class="left col-description">Description</th>
+                <th class="col-quantity">Qté</th>
+                <th class="col-price">Prix unitaire</th>
+                <th class="col-total">Total</th>
             </tr>
         </thead>
         <tbody>
             <?php foreach ($view['lines'] as $index => $line): ?>
                 <tr class="<?= $index % 2 === 1 ? 'shaded' : '' ?>">
-                    <td><?= $e($line['description']) ?></td>
+                    <td class="left"><?= $e($line['description']) ?></td>
                     <td><?= $e($line['quantity']) ?></td>
                     <td><?= $e($line['unit_price']) ?></td>
-                    <td><?= $e($line['total']) ?></td>
+                    <td class="total"><?= $e($line['total']) ?></td>
                 </tr>
             <?php endforeach; ?>
             <?php for ($index = count($view['lines']); $index < count($view['lines']) + $view['blank_rows']; ++$index): ?>
-                <tr class="<?= $index % 2 === 1 ? 'shaded' : '' ?>"><td></td><td></td><td></td><td></td></tr>
+                <tr class="<?= $index % 2 === 1 ? 'shaded' : '' ?>"><td class="left">&nbsp;</td><td></td><td></td><td></td></tr>
             <?php endfor; ?>
         </tbody>
     </table>
 
     <table class="summary">
         <tr>
-            <td class="notes"><?= $e($view['notes']) ?></td>
-            <td>
+            <td class="notes">
+                <?php if ($view['notes'] !== null && trim($view['notes']) !== ''): ?>
+                    <p class="eyebrow">Notes</p>
+                    <div class="text"><?= $e(trim($view['notes'])) ?></div>
+                <?php endif; ?>
+            </td>
+            <td class="col-totals">
                 <table class="totals">
-                    <?php foreach ($view['totals'] as $total): ?>
+                    <?php foreach ($totals as $total): ?>
                         <tr>
                             <td class="label"><?= $e($total['label']) ?></td>
                             <td class="value"><?= $e($total['value']) ?></td>
                         </tr>
                     <?php endforeach; ?>
+                    <tr class="grand">
+                        <td><?= $e($grandTotal['label']) ?></td>
+                        <td style="text-align: right; white-space: nowrap;"><?= $e($grandTotal['value']) ?></td>
+                    </tr>
                 </table>
             </td>
         </tr>
     </table>
 
-    <div class="stamp">
-        <?php if ($view['stamp'] !== null): ?>
-            <img src="<?= $e($view['stamp']['src']) ?>" alt="" style="width: <?= $e($view['stamp']['width']) ?>; height: <?= $e($view['stamp']['height']) ?>;">
-        <?php endif; ?>
-    </div>
-
-    <div class="bank">
-        <?php if ($company->bankAccount !== null): ?>
-            <p class="bank-label"><?= $e($company->bankLabel) ?> :</p>
-            <p class="bank-number"><?= $e($company->bankAccount) ?></p>
-        <?php endif; ?>
-        <div class="pill accent"></div>
-    </div>
+    <?php if ($company->bankAccount !== null || $view['stamp'] !== null): ?>
+        <table class="closing">
+            <tr>
+                <td>
+                    <?php if ($company->bankAccount !== null): ?>
+                        <div class="bank" style="width: 250pt;">
+                            <p class="eyebrow"><?= $e($company->bankLabel) ?></p>
+                            <p class="number"><?= $e($company->bankAccount) ?></p>
+                        </div>
+                    <?php endif; ?>
+                </td>
+                <td class="signature">
+                    <?php if ($view['stamp'] !== null): ?>
+                        <p class="eyebrow">Cachet et signature</p>
+                        <img src="<?= $e($view['stamp']['src']) ?>" alt="" style="width: <?= $e($view['stamp']['width']) ?>; height: <?= $e($view['stamp']['height']) ?>;">
+                    <?php endif; ?>
+                </td>
+            </tr>
+        </table>
+    <?php endif; ?>
 </div>
 </body>
 </html>

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { PlusIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { MoneyText } from '@/components/MoneyText'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
@@ -9,7 +9,7 @@ import { ResponsiveTable } from '@/components/ResponsiveTable'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { PermissionGate } from '@/features/auth/components/PermissionGate'
@@ -40,7 +40,7 @@ export function AdminInvoicesPage() {
         title="Invoices"
         action={
           <PermissionGate permission={PERMISSIONS.documentsManage}>
-            <Button nativeButton={false} render={<Link to="/admin/documents/new?type=INVOICE" />}>
+            <Button render={<Link to="/admin/documents/new?type=INVOICE" />}>
               <PlusIcon data-icon="inline-start" />
               New invoice
             </Button>
@@ -166,7 +166,7 @@ export function AdminPaymentsPage() {
               record.mutate({ customerId, invoiceId, amount })
             }}
           >
-            <FieldGroup>
+            <div className="flex flex-col gap-4">
               <Field>
                 <FieldLabel htmlFor="customer_id">Customer ID</FieldLabel>
                 <Input id="customer_id" name="customer_id" defaultValue={firstCustomer?.id ?? ''} required />
@@ -180,7 +180,7 @@ export function AdminPaymentsPage() {
                 <Input id="amount" name="amount" placeholder="100.0000" required />
                 <FieldDescription>Recorded as a bank transfer in TND.</FieldDescription>
               </Field>
-            </FieldGroup>
+            </div>
           </form>
         </CardContent>
         <CardFooter>

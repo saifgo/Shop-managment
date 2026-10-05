@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { Badge } from '@/components/ui/badge'
@@ -225,7 +225,7 @@ function StageRow({
       </NativeSelect>
 
       <div className="flex flex-wrap items-center gap-4 lg:flex-1">
-        <Field orientation="horizontal" className="w-auto">
+        <Field className="w-auto flex-row items-center">
           <Checkbox
             id={`${id}-qty`}
             checked={stage.can_record_quantity}
@@ -234,7 +234,7 @@ function StageRow({
           />
           <FieldLabel htmlFor={`${id}-qty`}>Records quantities</FieldLabel>
         </Field>
-        <Field orientation="horizontal" className="w-auto">
+        <Field className="w-auto flex-row items-center">
           <Checkbox
             id={`${id}-loss`}
             checked={stage.can_record_loss}
@@ -243,7 +243,7 @@ function StageRow({
           />
           <FieldLabel htmlFor={`${id}-loss`}>Records losses</FieldLabel>
         </Field>
-        <Field orientation="horizontal" className="w-auto">
+        <Field className="w-auto flex-row items-center">
           <Switch
             id={`${id}-active`}
             checked={stage.is_active}
@@ -372,7 +372,7 @@ function LossReasonRow({ reason, onSaved }: { reason: ProductionLossReason; onSa
         }}
       />
       <code className="hidden text-xs text-muted-foreground sm:inline">{reason.code}</code>
-      <Field orientation="horizontal" className="ml-auto w-auto">
+      <Field className="ml-auto w-auto flex-row items-center">
         <Switch
           id={`reason-${reason.id}`}
           checked={reason.is_active}

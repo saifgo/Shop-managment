@@ -55,6 +55,10 @@ class StockMovement implements CompanyScoped
     #[ORM\Column(name: 'created_by', type: 'string', length: 26, nullable: true)]
     private ?string $createdBy;
 
+    /** Cost of one unit at the time of the movement; receipts carry the purchase/production cost, issues the average cost. */
+    #[ORM\Column(name: 'unit_cost', type: 'decimal', precision: 19, scale: 4, nullable: true)]
+    private ?string $unitCost;
+
     #[ORM\Column(name: 'created_at')]
     private \DateTimeImmutable $createdAt;
 
@@ -71,6 +75,7 @@ class StockMovement implements CompanyScoped
         ?string $reference = null,
         ?string $notes = null,
         ?EntityId $createdBy = null,
+        ?string $unitCost = null,
     ) {
         $this->id = $id->toString();
         $this->companyId = $companyId->toString();
@@ -84,6 +89,7 @@ class StockMovement implements CompanyScoped
         $this->reference = $reference;
         $this->notes = $notes;
         $this->createdBy = $createdBy?->toString();
+        $this->unitCost = $unitCost;
         $this->createdAt = new \DateTimeImmutable();
     }
 
@@ -110,6 +116,11 @@ class StockMovement implements CompanyScoped
     public function getMovementType(): StockMovementType
     {
         return $this->movementType;
+    }
+
+    public function getUnitCost(): ?string
+    {
+        return $this->unitCost === null ? null : bcadd($this->unitCost, '0', 4);
     }
 
     public function getQuantityDelta(): string

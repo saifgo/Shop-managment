@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { documentsApi } from '@/lib/api/documents'

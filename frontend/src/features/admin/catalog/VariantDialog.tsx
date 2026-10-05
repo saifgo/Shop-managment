@@ -1,7 +1,7 @@
 import { useState, type ReactElement } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AlertCircleIcon, PlusIcon, XIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -13,12 +13,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { catalogApi, type ProductVariant, type VariantInput } from '@/lib/api/catalog'
+import { catalogApi, type ProductKind, type ProductVariant, type VariantInput } from '@/lib/api/catalog'
 
 interface AttributeRow {
   key: string
@@ -36,6 +36,7 @@ function initialState(variant?: ProductVariant) {
     price: variant ? String(Number(variant.base_price.amount)) : '',
     currency: variant?.base_price.currency ?? 'TND',
     isActive: variant?.is_active ?? true,
+    reorderLevel: variant?.reorder_level ? String(Number(variant.reorder_level)) : '',
     attributes: rows.length > 0 ? rows : [{ key: 'size', value: '' }],
   }
 }
@@ -46,9 +47,13 @@ interface VariantDialogProps {
   /** Omit to create a new variant. */
   variant?: ProductVariant
   trigger: ReactElement
+  /** Raw materials are not sold, so they have no price, and are counted in the product's unit. */
+  productKind?: ProductKind
+  unit?: string
 }
 
-export function VariantDialog({ productId, productName, variant, trigger }: VariantDialogProps) {
+export function VariantDialog({ productId, productName, variant, trigger, productKind = 'finished_good', unit = 'pc' }: VariantDialogProps) {
+  const isRawMaterial = productKind === 'raw_material'
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(() => initialState(variant))
@@ -59,7 +64,7 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
       const payload: VariantInput = {
         sku: form.sku.trim(),
         name: form.name.trim(),
-        base_price_amount: form.price.trim().replace(',', '.'),
+        base_price_amount: isRawMaterial ? '0' : form.price.trim().replace(',', '.'),
         base_price_currency: form.currency,
         attributes: Object.fromEntries(
           form.attributes
@@ -67,6 +72,7 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
             .filter(([key, value]) => key !== '' && value !== ''),
         ),
         is_active: form.isActive,
+        reorder_level: form.reorderLevel.trim() ? form.reorderLevel.trim().replace(',', '.') : null,
       }
       return variant
         ? catalogApi.updateVariant(productId, variant.id, payload)
@@ -87,7 +93,8 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
     }))
 
   const usedKeys = new Set(form.attributes.map((row) => row.key.trim().toLowerCase()))
-  const priceValid = /^\d+([.,]\d{1,4})?$/.test(form.price.trim())
+  const priceValid = isRawMaterial || /^\d+([.,]\d{1,4})?$/.test(form.price.trim())
+  const reorderValid = form.reorderLevel.trim() === '' || /^\d+([.,]\d{1,4})?$/.test(form.reorderLevel.trim())
 
   return (
     <Dialog
@@ -106,24 +113,26 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
           className="flex flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault()
-            if (form.sku.trim() && form.name.trim() && priceValid) save.mutate()
+            if (form.sku.trim() && form.name.trim() && priceValid && reorderValid) save.mutate()
           }}
         >
           <DialogHeader>
             <DialogTitle>{isEdit ? `Edit ${variant?.sku}` : 'Add variant'}</DialogTitle>
             <DialogDescription>
-              A variant is one sellable version of {productName} — for example a size or glaze.
+              {isRawMaterial
+                ? `A variant is one purchasable version of ${productName} — for example a grade or pack size.`
+                : `A variant is one sellable version of ${productName} — for example a size or glaze.`}
             </DialogDescription>
           </DialogHeader>
 
           {save.isError ? (
-            <Alert variant="destructive">
+            <Alert variant="error">
               <AlertCircleIcon />
               <AlertDescription>{save.error.message}</AlertDescription>
             </Alert>
           ) : null}
 
-          <FieldGroup>
+          <div className="flex flex-col gap-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field>
                 <FieldLabel htmlFor="variant-name">Name</FieldLabel>
@@ -149,6 +158,7 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
               </Field>
             </div>
 
+            {isRawMaterial ? null : (
             <Field data-invalid={form.price !== '' && !priceValid ? true : undefined}>
               <FieldLabel htmlFor="variant-price">Base price</FieldLabel>
               <InputGroup className="sm:max-w-56">
@@ -169,9 +179,32 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
                 Price before tax. Customer-specific prices can be set further down the product page.
               </FieldDescription>
             </Field>
+            )}
+
+            <Field data-invalid={!reorderValid ? true : undefined}>
+              <FieldLabel htmlFor="variant-reorder">Reorder level (optional)</FieldLabel>
+              <InputGroup className="sm:max-w-56">
+                <InputGroupInput
+                  id="variant-reorder"
+                  inputMode="decimal"
+                  placeholder={isRawMaterial ? '50' : '5'}
+                  value={form.reorderLevel}
+                  aria-invalid={!reorderValid}
+                  onChange={(e) => setForm({ ...form, reorderLevel: e.target.value })}
+                />
+                <InputGroupAddon align="inline-end">
+                  <InputGroupText>{unit}</InputGroupText>
+                </InputGroupAddon>
+              </InputGroup>
+              <FieldDescription>
+                {isRawMaterial
+                  ? 'Flagged as low stock at or below this level, so you re-order before the bin runs out.'
+                  : 'Flagged as low stock at or below this level. Left empty, products are flagged under 5.'}
+              </FieldDescription>
+            </Field>
 
             <Field>
-              <FieldTitle>Attributes</FieldTitle>
+              <span className="text-sm font-medium text-foreground">Attributes</span>
               <div className="flex flex-col gap-2">
                 {form.attributes.map((row, index) => (
                   <div key={index} className="flex items-center gap-2">
@@ -226,7 +259,7 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
               </div>
             </Field>
 
-            <Field orientation="horizontal">
+            <Field className="flex-row items-center">
               <Switch
                 id="variant-active"
                 checked={form.isActive}
@@ -239,10 +272,10 @@ export function VariantDialog({ productId, productName, variant, trigger }: Vari
                 </span>
               </FieldLabel>
             </Field>
-          </FieldGroup>
+          </div>
 
           <DialogFooter>
-            <Button type="submit" disabled={save.isPending || !priceValid || !form.sku.trim() || !form.name.trim()}>
+            <Button type="submit" disabled={save.isPending || !priceValid || !reorderValid || !form.sku.trim() || !form.name.trim()}>
               {save.isPending ? <Spinner data-icon="inline-start" /> : null}
               {isEdit ? 'Save variant' : 'Add variant'}
             </Button>

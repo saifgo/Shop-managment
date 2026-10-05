@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { PauseIcon, PlayIcon } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { PageHeader } from '@/components/PageHeader'
 import { QueryState } from '@/components/QueryState'
 import { ResponsiveTable } from '@/components/ResponsiveTable'
@@ -34,6 +34,7 @@ import {
   type ProductionStage,
 } from '@/lib/api/production'
 import { PERMISSIONS } from '@/lib/auth/permissions'
+import { ProductionCostCard } from './ProductionCostCard'
 import { formatDateTime, formatQuantity } from '@/lib/format'
 import { DECIMAL, fromUnits, toUnits } from '@/lib/quantity'
 
@@ -223,6 +224,8 @@ export function AdminProductionDetailPage() {
               </CardContent>
             </Card>
 
+            <ProductionCostCard key={`${data.id}-${data.status}-${data.additional_cost}`} production={data} canManage={canManage} />
+
             {data.stages.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Stages are created from the production workflow when the order is started.
@@ -376,6 +379,11 @@ function CancelProductionDialog({
           <DialogTitle>Cancel {production.reference}?</DialogTitle>
           <DialogDescription>
             This cannot be undone. Units still in process are not added to stock; completed stages stay in the history.
+            {production.materials.some((material) => material.consumed)
+              ? production.stages.some((stage) => stage.status !== 'PENDING')
+                ? ' Work has started, so the materials already drawn cannot be returned: their cost is written off.'
+                : ' No work has started, so the materials drawn are returned to stock.'
+              : ''}
           </DialogDescription>
         </DialogHeader>
         <Field>

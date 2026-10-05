@@ -25,7 +25,7 @@ export function PortalOrdersPage() {
         title="Your orders"
         description="Track each order from confirmation to delivery."
         action={
-          <Button nativeButton={false} render={<Link to="/portal/catalog" />}>
+          <Button render={<Link to="/portal/catalog" />}>
             Shop
           </Button>
         }
@@ -38,7 +38,7 @@ export function PortalOrdersPage() {
         emptyTitle="No orders yet"
         emptyDescription="Browse the shop and place your first order."
         emptyAction={
-          <Button nativeButton={false} render={<Link to="/portal/catalog" />}>
+          <Button render={<Link to="/portal/catalog" />}>
             Browse the shop
           </Button>
         }
@@ -76,7 +76,7 @@ export function PortalOrdersPage() {
               },
             ]}
             rowAction={(order) => (
-              <Button variant="outline" size="sm" nativeButton={false} render={<Link to={`/portal/orders/${order.id}`} />}>
+              <Button variant="outline" size="sm" render={<Link to={`/portal/orders/${order.id}`} />}>
                 View
               </Button>
             )}

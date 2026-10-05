@@ -132,6 +132,17 @@ final class PurchasingController extends AbstractController
         ), 201);
     }
 
+    #[Route('/api/purchase-orders/{id}/cancel', name: 'api_purchase_orders_cancel', methods: ['POST'])]
+    public function cancelPurchaseOrder(string $id, Request $request, #[CurrentUser] User $user): JsonResponse
+    {
+        $this->denyAccessUnlessGranted(PermissionVoter::ATTRIBUTE, PermissionCatalog::PURCHASING_MANAGE);
+
+        $payload = $request->getContent() !== '' ? $request->toArray() : [];
+        $reason = isset($payload['reason']) && is_string($payload['reason']) ? $payload['reason'] : null;
+
+        return $this->json($this->purchasingService->cancelPurchaseOrder($user, $id, $reason));
+    }
+
     #[Route('/api/supplier-invoices', name: 'api_supplier_invoices_create', methods: ['POST'])]
     public function createSupplierInvoice(#[MapRequestPayload] CreateSupplierInvoiceRequest $payload, #[CurrentUser] User $user): JsonResponse
     {
